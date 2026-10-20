@@ -8,6 +8,33 @@ as [docs/releasing.md](docs/releasing.md#version-numbers) applies it to this
 code. Each version names the Smartable Wallet release its files were exported
 from.
 
+## [1.0.1] - 2026-10-20
+
+Exported from Smartable Wallet 2.2.0 (build 22).
+
+No code changed: every file under `lib/`, `native/` and `test/`, and
+`pubspec.lock`, is the same as in 1.0.0. This version changes the
+documentation only.
+
+### Changed
+
+- The repository's home is gitlab.com/getsmartable-app/core: the README's
+  badges, links and clone address, the `repository` in `pubspec.yaml` and the
+  address on the banner point there.
+- While GitHub Actions is not running for this repository, a version is
+  checked locally before it is published — `flutter analyze` and the full test
+  suite on macOS — and its archive and `SHA256SUMS` are made with
+  `git archive` from the tag. This version carries no provenance attestation.
+- A vulnerability is reported by email only; GitHub's private vulnerability
+  reporting is not available here. Bug reports and proposed changes also go by
+  email.
+
+### Fixed
+
+- The README and the 1.0.0 entry below said every split-backup share is
+  sealed under the wallet password. Shares kept on the phone and in cloud
+  accounts are; a share written on paper is its own words and is not sealed.
+
 ## [1.0.0] - 2026-10-16
 
 Exported from Smartable Wallet 2.2.0 (build 21).
@@ -38,4 +65,5 @@ Exported from Smartable Wallet 2.2.0 (build 21).
     derived from the wallet password; a share written on paper leaves only a
     note on the phone, never its words.
 
-[1.0.0]: https://github.com/getsmartable-app/core/releases/tag/v1.0.0
+[1.0.1]: https://gitlab.com/getsmartable-app/core/-/releases/v1.0.1
+[1.0.0]: https://gitlab.com/getsmartable-app/core/-/releases/v1.0.0

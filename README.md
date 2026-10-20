@@ -4,12 +4,9 @@
 
 <br>
 
-[![CI](https://github.com/getsmartable-app/core/actions/workflows/ci.yml/badge.svg)](https://github.com/getsmartable-app/core/actions/workflows/ci.yml)
-[![Dependencies](https://github.com/getsmartable-app/core/actions/workflows/dependencies.yml/badge.svg)](https://github.com/getsmartable-app/core/actions/workflows/dependencies.yml)
-[![CodeQL](https://github.com/getsmartable-app/core/actions/workflows/codeql.yml/badge.svg)](https://github.com/getsmartable-app/core/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/getsmartable-app/core/badge)](https://securityscorecards.dev/viewer/?uri=github.com/getsmartable-app/core)
+[![Release](https://gitlab.com/getsmartable-app/core/-/badges/release.svg)](https://gitlab.com/getsmartable-app/core/-/releases)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15544/badge)](https://www.bestpractices.dev/projects/15544)
-[![Release](https://img.shields.io/github/v/release/getsmartable-app/core)](https://github.com/getsmartable-app/core/releases)
+[![OpenSSF Scorecard (GitHub)](https://img.shields.io/ossf-scorecard/github.com/getsmartable-app/core?label=openssf%20scorecard%20%28GitHub%29)](https://securityscorecards.dev/viewer/?uri=github.com/getsmartable-app/core)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Platforms: Android | iOS](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-lightgrey)](#whats-inside)
 
@@ -53,7 +50,7 @@ transaction review and the backend stay proprietary — see
 | **The app PIN** | `pin_lock.dart`<br>`native/android/main/PinPepperKey.kt`<br>`native/ios/main/PinPepperKey.swift` | Six digits, passed first through a key in the phone's key store — HMAC in Android Keystore, StrongBox where there is one, or ECDH in the Secure Enclave — then sealed by a second device key. Every guess is a key-store operation on that phone, so the million PINs cannot be carried off to a faster machine. On Android 15 and later both keys work only while the phone is unlocked. An unlocked, rooted phone is not protected. |
 | **Biometric unlock** | `quick_unlock.dart`<br>`native/*/main/HardwareVaultKey.*` | Face ID, Touch ID or a Class 3 biometric on Android, bound to a key that is released once per use. The phone's own passcode or pattern never opens the wallet. `quick_unlock.dart` decides when the option is offered at all. |
 | **One lockout** | `unlock_throttle.dart`<br>`device_uptime.dart`<br>`native/*/main/DeviceUptime.*` | Wrong guesses are counted on one counter and the wait is measured on the boot clock, so changing the date does not end it. |
-| **Split backup** | `slip39.dart`<br>`slip39_wordlist.dart`<br>`sealed_share.dart`<br>`share_store.dart`<br>`paper_share_store.dart` | SLIP-39 Shamir backup — the app offers 2-of-3 and 3-of-5. Each share is sealed under a key derived from the wallet password before it leaves the device. A share written on paper leaves only a note on the phone — which backup, which share — never its words. |
+| **Split backup** | `slip39.dart`<br>`slip39_wordlist.dart`<br>`sealed_share.dart`<br>`share_store.dart`<br>`paper_share_store.dart` | SLIP-39 Shamir backup — the app offers 2-of-3 and 3-of-5. Shares kept on the phone and in cloud accounts are sealed under a key derived from the wallet password. A share written on paper is its own words and is not sealed; the phone keeps only a note — which backup, which share — never the words. |
 
 Dart files are under `lib/core/`, their tests under `test/`. The native files
 are published for review; the core has no Android or iOS project to build them
@@ -78,7 +75,7 @@ in.
 Flutter 3.44.8 — the version the app is built with:
 
 ```bash
-git clone https://github.com/getsmartable-app/core.git
+git clone https://gitlab.com/getsmartable-app/core.git
 cd core
 flutter pub get --enforce-lockfile
 flutter analyze
@@ -90,13 +87,24 @@ On macOS the tests need full Xcode, not only the Command Line Tools:
 
 ## Checks and releases
 
-| Check | What it runs | When |
-|---|---|---|
-| [CI](.github/workflows/ci.yml) | `flutter analyze` and the full test suite, on Linux and macOS | Every push and pull request |
-| [Dependencies](.github/workflows/dependencies.yml) | [OSV-Scanner](https://google.github.io/osv-scanner/) against every package in `pubspec.lock` | Every push, and weekly |
-| [Scorecard](.github/workflows/scorecard.yml) | [OpenSSF Scorecard](https://securityscorecards.dev): pinned actions, token permissions, branch protection, security policy | Weekly, and on changes to branch protection |
-| [CodeQL](.github/workflows/codeql.yml) | [CodeQL](https://codeql.github.com) on the workflows themselves — untrusted input reaching a shell, excess token permissions (CodeQL has no Dart analysis) | Every push and pull request, and weekly |
-| [Release](.github/workflows/release.yml) | The tag, `pubspec.yaml` and the changelog checked against each other, the tests, then a source archive, its SHA-256 and a signed provenance attestation, also attached as a file | Every version tag |
+Up to 1.0.0, every change ran through GitHub Actions, with the workflows kept in
+this repository:
+
+| Check | What it runs |
+|---|---|
+| [CI](.github/workflows/ci.yml) | `flutter analyze` and the full test suite, on Linux and macOS |
+| [Dependencies](.github/workflows/dependencies.yml) | [OSV-Scanner](https://google.github.io/osv-scanner/) against every package in `pubspec.lock` |
+| [Scorecard](.github/workflows/scorecard.yml) | [OpenSSF Scorecard](https://securityscorecards.dev): pinned actions, token permissions, branch protection, security policy |
+| [CodeQL](.github/workflows/codeql.yml) | [CodeQL](https://codeql.github.com) on the workflows themselves — untrusted input reaching a shell, excess token permissions (CodeQL has no Dart analysis) |
+| [Release](.github/workflows/release.yml) | The tag, `pubspec.yaml` and the changelog checked against each other, the tests, then a source archive, its SHA-256 and a signed provenance attestation |
+
+GitHub Actions is not running for this repository at present. From 1.0.1, a
+version is checked before it is published instead:
+`flutter pub get --enforce-lockfile`, `flutter analyze` and the full test
+suite run on macOS on the exact tree that is tagged, and the archive and
+`SHA256SUMS` are made from the tag with `git archive`, as the release workflow
+does. Such a version carries no provenance attestation, and its release says
+so.
 
 Every action is pinned to a full commit SHA. Dependencies are pinned to the
 exact versions the app ships, and `--enforce-lockfile` refuses any other.
@@ -108,12 +116,20 @@ Wallet release its files came from. How versions are numbered and made:
 [docs/releasing.md](docs/releasing.md).
 
 **Each release is kept.** A new version is added to
-[Releases](https://github.com/getsmartable-app/core/releases) beside the earlier
-ones. To check that an archive is the one this repository built from its tag:
+[Releases](https://gitlab.com/getsmartable-app/core/-/releases) beside the
+earlier ones. To check that an archive is the one the release lists:
 
 ```bash
 sha256sum -c SHA256SUMS
-gh attestation verify smartable-wallet-core-vX.Y.Z.tar.gz --repo getsmartable-app/core
+```
+
+1.0.0 also carries a provenance attestation from GitHub Actions, with its
+Sigstore bundle attached, which can be checked without a GitHub account:
+
+```bash
+gh attestation verify smartable-wallet-core-v1.0.0.tar.gz \
+  --bundle smartable-wallet-core-v1.0.0.tar.gz.intoto.jsonl \
+  --repo getsmartable-app/core
 ```
 
 The attestation proves where the archive came from. It does not prove that an
@@ -144,11 +160,10 @@ published and what is not.
 
 ## Feedback
 
-Bug reports and questions are welcome as
-[GitHub issues](https://github.com/getsmartable-app/core/issues), and changes
-as pull requests — this repository is assembled from the application's source,
-so [CONTRIBUTING.md](CONTRIBUTING.md) explains how a change arrives. Security
-issues go privately, as above.
+Bug reports, questions and proposed changes are welcome by email to
+[hello@getsmartable.app](mailto:hello@getsmartable.app) — this repository is
+assembled from the application's source, so [CONTRIBUTING.md](CONTRIBUTING.md)
+explains how a change arrives. Security issues go privately, as above.
 
 ## Trademarks
 

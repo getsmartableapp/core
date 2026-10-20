@@ -33,10 +33,7 @@ Email:
 
 [hello@getsmartable.app](mailto:hello@getsmartable.app)
 
-Or use GitHub's private vulnerability reporting on this repository:
-**Security → Report a vulnerability**.
-
-Do not publish a vulnerability as a public GitHub issue before we have had a
+Do not publish a vulnerability as a public issue before we have had a
 reasonable opportunity to investigate it.
 
 Please include:
