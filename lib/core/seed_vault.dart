@@ -138,6 +138,25 @@ class SeedVault {
   /// way to move it.
   final bool isAgentVault;
 
+  /// Whether this app generated the vault's phrase, here — not typed in,
+  /// restored or rebuilt from shares.
+  ///
+  /// **What it decides is that a Bitcoin standard has nothing to find.** A
+  /// phrase made a moment ago from fresh randomness has used no address on
+  /// any standard, so the scan for older ones is answered without asking the
+  /// person's connection and without its banner ("Checking your older Bitcoin
+  /// addresses — a wallet made before 2017…"), which the owner saw under a
+  /// wallet made seconds before (30 October 2026). See
+  /// `WalletProvider.startBitcoinDiscovery`.
+  ///
+  /// **False is what everything absent means**, and that direction is the
+  /// cautious one: a phrase not marked is scanned as before. A build from
+  /// before the field keeps the record and drops the flag when it rewrites it,
+  /// which costs that wallet one scan and nothing else.
+  ///
+  /// Set only at creation; [copyWith] carries it and offers no way to set it.
+  final bool madeHere;
+
   /// How many Agent Wallets one device keeps.
   ///
   /// **Two, and the number is about recovery phrases.** Each Agent Wallet is a
@@ -163,6 +182,7 @@ class SeedVault {
     this.hasPassword = true,
     this.splitBackupId,
     this.isAgentVault = false,
+    this.madeHere = false,
   });
 
   /// [clearLabel] exists because `label: null` cannot mean "remove it" — the
@@ -212,6 +232,9 @@ class SeedVault {
         // being cleared. Whatever it was paired with, and whatever it was told,
         // happened.
         isAgentVault: isAgentVault,
+        // Carried, like [isAgentVault]: where a phrase came from does not
+        // change after it came.
+        madeHere: madeHere,
       );
 
   Map<String, dynamic> toJson() => {
@@ -233,6 +256,8 @@ class SeedVault {
         // Written only when true, so no existing record changes shape and the
         // absent case keeps meaning the safe thing.
         if (isAgentVault) 'agent': true,
+        // Written only when true, as above.
+        if (madeHere) 'made': true,
       };
 
   /// Returns null for anything it cannot read in full.
@@ -284,6 +309,8 @@ class SeedVault {
       // other shape — absent, null, `1`, `"true"`, a map — reads as false,
       // which is the direction that keeps the Primary Wallet out of reach.
       isAgentVault: raw['agent'] == true,
+      // Only a literal `true`: anything else is a phrase scanned as before.
+      madeHere: raw['made'] == true,
     );
   }
 

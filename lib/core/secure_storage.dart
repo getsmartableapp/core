@@ -69,6 +69,12 @@ class SecureStorage {
   /// anything. Here, an older build never sees it.
   static const _importedChainKeysKey = 'imported_chain_keys';
 
+  /// Every imported key since 29 October 2026, each sealed on its own inside
+  /// one sealed record (`docs/RUST_KEY_CORE_DESIGN.md#phase-5b`, O23). The two
+  /// records above are moved into it at the first unlock that opens them, and
+  /// removed once it has been read back (O25).
+  static const _importedKeyRecordsKey = 'imported_key_records';
+
   /// The JSON list of [SeedVault]s. Replaces the single `encrypted_seed` /
   /// `salt` pair, which is still read once for migration and then left alone.
   static const _vaultsKey = 'seed_vaults';
@@ -1219,6 +1225,20 @@ class SecureStorage {
 
   static Future<String?> getImportedChainKeys() =>
       readSecret(_importedChainKeysKey);
+
+  /// The sealed record of imported keys ([_importedKeyRecordsKey]), or clears
+  /// it when [sealed] is null — through [deleteSecret], for the reason
+  /// [saveImportedKeys] gives. Throws [SecretStorageDeletionIncomplete].
+  static Future<void> saveImportedKeyRecords(String? sealed) async {
+    if (sealed == null) {
+      await deleteSecret(_importedKeyRecordsKey);
+      return;
+    }
+    await writeSecret(_importedKeyRecordsKey, sealed);
+  }
+
+  static Future<String?> getImportedKeyRecords() =>
+      readSecret(_importedKeyRecordsKey);
 
   /// Erases everything this app has written, in both stores.
   ///

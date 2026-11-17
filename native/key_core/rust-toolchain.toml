@@ -1,0 +1,11 @@
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
+# The host, and the three ABIs the release APK splits into
+# (tool/build_android.sh).
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "x86_64-linux-android",
+]

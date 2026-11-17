@@ -22,13 +22,31 @@ final _secureRandom = Random.secure();
 /// decide whether a password may be replaced. In the app this is
 /// `WalletProvider`.
 abstract interface class VaultHost {
-  /// Builds the wallet on [mnemonic], the phrase of [vault], just opened by
-  /// the password, the PIN or the device key. The account key is already held
-  /// when this is called.
-  Future<void> opened(SeedVault vault, String mnemonic);
+  /// Builds the wallet on [vault]'s phrase, just opened by the password, the
+  /// PIN or the device key: the phrase sealed in [vault]'s record under
+  /// [vaultKey]. The account key is already held when this is called.
+  ///
+  /// **The keeper hands over the seal, never the phrase** (phase 6b,
+  /// `docs/RUST_KEY_CORE_DESIGN.md#phase-6b`). A wallet that keeps the phrase
+  /// in the key core opens the record there, and one that derives in Dart
+  /// decrypts it itself; the keeper decrypts no phrase to open a wallet.
+  /// [vaultKey] stays the keeper's — the host reads it, and neither keeps it
+  /// nor writes over it.
+  Future<void> opened(SeedVault vault, Uint8List vaultKey);
 
-  /// The same, for a switch to another phrase already open in this session.
-  Future<void> switched(SeedVault vault, String mnemonic);
+  /// The same, for a switch to another phrase whose key is held.
+  Future<void> switched(SeedVault vault, Uint8List vaultKey);
+
+  /// Whether [key] opens [vault]'s record — the question for a vault sealed
+  /// before key wrapping, whose key no tag of its own proves. Asked where the
+  /// host keeps the phrase: in the key core, the record is opened there and
+  /// closed again; otherwise it is decrypted in Dart and the text dropped.
+  bool sealOpens(SeedVault vault, Uint8List key);
+
+  /// Whether [vault]'s record, opened with [key], holds [phrase] — normalised,
+  /// as [VaultKeeper.addVault] is handed one — for the duplicate check, asked
+  /// where the host keeps the phrase, as [sealOpens] is.
+  bool sealHolds(SeedVault vault, Uint8List key, String phrase);
 
   /// Drops everything derived from the phrase, in the same breath as the
   /// keeper drops its keys.
@@ -63,9 +81,22 @@ abstract interface class VaultHost {
 /// One wallet holds one keeper and builds its accounts on what the keeper
 /// opens — see [VaultHost].
 class VaultKeeper {
-  VaultKeeper(this._host);
+  VaultKeeper(this._host, {this.opensActiveOnly = false});
 
   final VaultHost _host;
+
+  /// Whether a wallet is opened only while it is the active one — the
+  /// owner's decision O28, for a build that keeps the phrase in the key core
+  /// (`docs/RUST_KEY_CORE_DESIGN.md#phase-6b`).
+  ///
+  /// **Then an unlock opens the active wallet and no other, and a switch
+  /// closes the wallet left.** One vault key is held at a time — the key and
+  /// the stored record are the phrase, so holding every key would be holding
+  /// every phrase — and a switch to another wallet asks for its password, or
+  /// its PIN where the PIN opens it ([VaultLocked]). A build that derives in
+  /// Dart opens every wallet a password opens, as it always has: the open
+  /// phrase is in Dart there anyway.
+  final bool opensActiveOnly;
 
   /// The key imported private keys are encrypted under, held while unlocked.
   ///
@@ -78,7 +109,9 @@ class VaultKeeper {
   /// notices.
   Uint8List? _encryptionKey;
 
-  /// Every open vault's own key, by vault id.
+  /// Every open vault's own key, by vault id — the active one alone where
+  /// [opensActiveOnly]. **No phrase is held beside them** (phase 6b): a
+  /// wallet is opened from its record and this key, by the host.
   ///
   /// Kept because the wrapper can only be opened by the password that was
   /// typed, and the app needs the key itself afterwards — to hand to the PIN
@@ -104,6 +137,46 @@ class VaultKeeper {
   /// is not the one it was written under.
   String decryptWithAccountKey(String sealed) =>
       CryptoUtils.decrypt(base64Decode(sealed), _encryptionKey!);
+
+  /// Seals one imported key's bytes under the account key, on their own, so
+  /// that the record holding it can be rewritten without opening it
+  /// (`docs/RUST_KEY_CORE_DESIGN.md#phase-5b`, O23). Only while
+  /// [holdsAccountKey].
+  String sealKeyWithAccountKey(Uint8List secret) =>
+      base64Encode(CryptoUtils.encryptBytes(secret, _encryptionKey!));
+
+  /// Opens what [sealKeyWithAccountKey] sealed, as bytes the caller writes
+  /// over when done. Throws when the account key held is not the one it was
+  /// sealed under.
+  Uint8List openKeyWithAccountKey(String sealed) {
+    keysOpenedHere++;
+    return CryptoUtils.decryptBytes(base64Decode(sealed), _encryptionKey!);
+  }
+
+  /// [phrase] sealed under [vaultKey] on this side, counted
+  /// ([phrasesSealedHere]).
+  static Uint8List _sealedHere(String phrase, Uint8List vaultKey) {
+    phrasesSealedHere++;
+    return CryptoUtils.encrypt(phrase, vaultKey);
+  }
+
+  /// How many phrases were sealed on this side rather than in the key core —
+  /// read only by the tests that hold a key core build to none (14 November
+  /// 2026).
+  static int phrasesSealedHere = 0;
+
+  /// How many imported keys [openKeyWithAccountKey] opened on this side — read
+  /// only by the tests that hold a key core build to opening none here (this
+  /// file stays free of Flutter, so no `@visibleForTesting`).
+  static int keysOpenedHere = 0;
+
+  /// [openKeyWithAccountKey] in the Rust key core: [open] is handed the
+  /// record and the account key and answers with what it opened there —
+  /// **the key's bytes never come to this side** (14 November 2026, the
+  /// owner's "no holes"). Only while [holdsAccountKey].
+  T openKeyWith<T>(
+          String sealed, T Function(Uint8List record, Uint8List accountKey) open) =>
+      open(base64Decode(sealed), _encryptionKey!);
 
   /// Changes one stored vault's record and writes the list.
   ///
@@ -162,15 +235,9 @@ class VaultKeeper {
       // Nothing to check against. Answering "yes" would let a screen gated on
       // this — export, remove wallet — open on a password nobody set.
       if (!vault.hasPassword) return false;
-      try {
-        final derived =
-            await CryptoUtils.deriveKey(password, base64Decode(vault.salt));
-        CryptoUtils.decrypt(
-            base64Decode(vault.encryptedSeed), _vaultKey(vault, derived));
-        return true;
-      } catch (_) {
-        return false;
-      }
+      // **By the key, not the phrase** (phase 6b): this decrypted the phrase
+      // in Dart to answer one bit, at every gate that asks.
+      return await _keyFrom(vault, password) != null;
     }
 
     final encryptedBase64 = await SecureStorage.getEncryptedSeed();
@@ -231,16 +298,36 @@ class VaultKeeper {
     required int accountSpan,
     required int derivedCount,
     required bool backedUp,
+    bool madeHere = false,
+  }) =>
+      saveSealedSeedWithoutPassword(
+        (vaultKey) => _sealedHere(mnemonic, vaultKey),
+        accountSpan: accountSpan,
+        derivedCount: derivedCount,
+        backedUp: backedUp,
+        madeHere: madeHere,
+      );
+
+  /// [saveSeedWithoutPassword] for a phrase the Rust key core holds: [seal]
+  /// makes the record under the vault key drawn here, in the core
+  /// (14 November 2026). Everything else is [saveSeedWithoutPassword]'s.
+  Future<void> saveSealedSeedWithoutPassword(
+    Uint8List Function(Uint8List vaultKey) seal, {
+    required int accountSpan,
+    required int derivedCount,
+    required bool backedUp,
+    bool madeHere = false,
   }) async {
     final vaultKey = CryptoUtils.randomKey();
     final vault = SeedVault(
       id: 'primary',
-      encryptedSeed: base64Encode(CryptoUtils.encrypt(mnemonic, vaultKey)),
+      encryptedSeed: base64Encode(seal(vaultKey)),
       salt: base64Encode(
           List<int>.generate(16, (i) => _secureRandom.nextInt(256))),
       accountCount: max(1, accountSpan),
       backedUp: backedUp,
       hasPassword: false,
+      madeHere: madeHere,
     );
 
     _vaults
@@ -331,22 +418,61 @@ class VaultKeeper {
   /// the keys and the phrase from memory — the records stay; see
   /// [_clearSensitiveData].
   ///
-  /// [accountSpan], [derivedCount] and [backedUp] are as in
-  /// [saveSeedWithoutPassword].
+  /// [accountSpan], [derivedCount], [backedUp] and [madeHere] are as in
+  /// [saveSeedWithoutPassword]; [madeHere] is `SeedVault.madeHere`.
   Future<void> saveSeed(
     String mnemonic,
     String password, {
     required int accountSpan,
     required int derivedCount,
     required bool backedUp,
+    bool madeHere = false,
+  }) =>
+      _saveSeed(
+        (vaultKey) => _sealedHere(mnemonic, vaultKey),
+        password,
+        accountSpan: accountSpan,
+        derivedCount: derivedCount,
+        backedUp: backedUp,
+        madeHere: madeHere,
+      );
+
+  /// [saveSeed] for a phrase this side never reads — a wallet a split backup
+  /// gave back in the Rust key core (phase 7b,
+  /// `docs/RUST_KEY_CORE_DESIGN.md#phase-7`): [seal] makes the record under
+  /// the vault key this keeper draws, in the core, in the layout
+  /// [CryptoUtils.encrypt] writes. Everything else is [saveSeed]'s.
+  Future<void> saveSealedSeed(
+    Uint8List Function(Uint8List vaultKey) seal,
+    String password, {
+    required int accountSpan,
+    required int derivedCount,
+    required bool backedUp,
+    bool madeHere = false,
+  }) =>
+      _saveSeed(
+        seal,
+        password,
+        accountSpan: accountSpan,
+        derivedCount: derivedCount,
+        backedUp: backedUp,
+        madeHere: madeHere,
+      );
+
+  Future<void> _saveSeed(
+    Uint8List Function(Uint8List vaultKey) seal,
+    String password, {
+    required int accountSpan,
+    required int derivedCount,
+    required bool backedUp,
+    bool madeHere = false,
   }) async {
     requireSealablePassword(password);
     final salt = List<int>.generate(16, (i) => _secureRandom.nextInt(256));
     final derived = await CryptoUtils.deriveKey(password, salt);
     // The phrase is sealed under a key that was never typed by anybody.
     final vaultKey = CryptoUtils.randomKey();
-    final encryptedBase64 =
-        base64Encode(CryptoUtils.encrypt(mnemonic, vaultKey));
+    final encryptedBase64 = base64Encode(seal(vaultKey));
     final saltBase64 = base64Encode(salt);
 
     final vault = SeedVault(
@@ -356,6 +482,7 @@ class VaultKeeper {
       wrappedKey: CryptoUtils.wrapKey(vaultKey, derived),
       accountCount: max(1, accountSpan),
       backedUp: backedUp,
+      madeHere: madeHere,
     );
     _vaults
       ..clear()
@@ -403,10 +530,6 @@ class VaultKeeper {
 
   /// Which vault the current accounts were derived from.
   String? _activeVaultId;
-
-  /// Decrypted phrases by vault id, held only while unlocked. Cleared with
-  /// everything else in [_clearSensitiveData].
-  final Map<String, String> _vaultMnemonics = {};
 
   String? get activeVaultId => _activeVaultId;
 
@@ -504,7 +627,7 @@ class VaultKeeper {
   /// search on the Change password screen. The screen runs the call through
   /// `revealWithSecret`, which reads the type.
   Future<void> changePassword(String current, String next) async {
-    if (_vaults.isEmpty || _vaultMnemonics.isEmpty) {
+    if (_vaults.isEmpty || !_holdsActiveKey) {
       throw Exception('Unlock the wallet before changing its password.');
     }
     if (!await verifyPassword(current)) {
@@ -530,53 +653,74 @@ class VaultKeeper {
   /// recovery path passes nothing and is refused outright if that turns out to
   /// be untrue, rather than writing a wallet whose imported accounts nothing
   /// can open.
+  ///
+  /// **From the vault keys alone, never a phrase** (phase 6d,
+  /// `docs/RUST_KEY_CORE_DESIGN.md#phase-6d`). Each vault's key is the one
+  /// held, or — for a wallet not open, which [opensActiveOnly] makes every
+  /// other one — the one [legacyKeyFrom], the current password, opens; it is
+  /// used for the re-wrap and dropped, so the change opens no wallet.
   Future<void> _reseal(String next, {String? legacyKeyFrom}) async {
     requireSealablePassword(next);
 
-    // Built entirely before anything is written.
-    final rebuilt = <SeedVault>[];
-    final rebuiltKeys = <String, Uint8List>{};
-    for (final vault in _vaults) {
-      final mnemonic = _vaultMnemonics[vault.id];
-      if (mnemonic == null) {
+    // Every vault's key, before anything is written.
+    final opened = <String, Uint8List>{};
+    final keys = <String, Uint8List?>{
+      for (final entry in await Future.wait(_vaults.map((vault) async {
+        final held = _vaultKeys[vault.id];
+        if (held != null) return MapEntry(vault.id, held);
+        if (legacyKeyFrom == null) return MapEntry(vault.id, null);
+        final key = await _keyFrom(vault, legacyKeyFrom);
+        if (key != null) opened[vault.id] = key;
+        return MapEntry(vault.id, key);
+      })))
+        entry.key: entry.value,
+    };
+    try {
+      if (keys.values.contains(null)) {
         // A phrase that did not open under the old password cannot be
         // re-sealed under the new one, and writing the rest without it would
         // strand it permanently.
         throw Exception(
             'One of your recovery phrases could not be opened. Nothing was changed.');
       }
-      final salt = List<int>.generate(16, (i) => _secureRandom.nextInt(256));
-      final derived = await CryptoUtils.deriveKey(next, salt);
 
-      // **The vault key is kept, not replaced.** This is what wrapping was for:
-      // a password change re-wraps 32 bytes and never touches the phrase, which
-      // is why the PIN and the device store — both of which hold this key —
-      // keep working across it. Replacing it meant re-encrypting every phrase
-      // and throwing both away.
-      //
-      // A vault written before wrapping has no key of its own, and converts
-      // here: it is the one moment that costs nothing, because such a vault's
-      // key *is* the old derived key and re-sealing it under a random one is a
-      // single AES pass over a phrase already in memory.
-      final existing = _vaultKeys[vault.id];
-      final vaultKey = existing ?? CryptoUtils.randomKey();
-      rebuiltKeys[vault.id] = vaultKey;
-      rebuilt.add(vault.copyWith(
-        encryptedSeed: existing != null
-            ? vault.encryptedSeed
-            : base64Encode(CryptoUtils.encrypt(mnemonic, vaultKey)),
-        salt: base64Encode(salt),
-        wrappedKey: CryptoUtils.wrapKey(vaultKey, derived),
-      ));
+      // Built entirely before anything is written.
+      final rebuilt = <SeedVault>[];
+      for (final vault in _vaults) {
+        final salt = List<int>.generate(16, (i) => _secureRandom.nextInt(256));
+        final derived = await CryptoUtils.deriveKey(next, salt);
+
+        // **The vault key is kept, not replaced.** This is what wrapping was
+        // for: a password change re-wraps 32 bytes and never touches the
+        // phrase, which is why the PIN and the device store — both of which
+        // hold this key — keep working across it. Replacing it meant
+        // re-encrypting every phrase and throwing both away.
+        //
+        // **A vault sealed before wrapping keeps its key too** — the key
+        // derived from the old password and the old salt, wrapped under the
+        // new password from here on. The old salt is not kept, so that key
+        // is no password's derivation any more, and the PIN and the device
+        // store, which hold it, go on opening the wallet. This said such a
+        // vault moved to a random key; the code has not done that since
+        // 4 August 2026 (`8e69c3c0`), and the owner kept it so on 30 October
+        // (O31) rather than re-seal its phrase.
+        rebuilt.add(vault.copyWith(
+          salt: base64Encode(salt),
+          wrappedKey: CryptoUtils.wrapKey(keys[vault.id]!, derived),
+        ));
+      }
+
+      _vaults
+        ..clear()
+        ..addAll(rebuilt);
+      await _writeVaults();
+    } finally {
+      // The keys this change opened for itself are dropped: it re-wraps a
+      // wallet, it does not open one.
+      for (final key in opened.values) {
+        key.fillRange(0, key.length, 0);
+      }
     }
-
-    _vaults
-      ..clear()
-      ..addAll(rebuilt);
-    _vaultKeys
-      ..clear()
-      ..addAll(rebuiltKeys);
-    await _writeVaults();
 
     // Every vault is wrapped after this, so the loose legacy pair can only be
     // a copy under the *old* password — an older build would open the wallet
@@ -671,7 +815,7 @@ class VaultKeeper {
     if (!await hasPin() && !await hasDeviceUnlock()) {
       return PasswordRecoveryOffer.none;
     }
-    if (_vaults.any((v) => _vaultMnemonics[v.id] == null)) {
+    if (_vaults.any((v) => _vaultKeys[v.id] == null)) {
       return PasswordRecoveryOffer.otherWalletsClosed;
     }
     return PasswordRecoveryOffer.available;
@@ -765,6 +909,9 @@ class VaultKeeper {
   /// proven by reconstruction, never one merely lying in a cloud. A wallet
   /// added from shares was left with no link at all, so its status screen
   /// could not say which backup was its own.
+  ///
+  /// [madeHere] is `SeedVault.madeHere`: true only for a phrase this app
+  /// generated a moment ago for this wallet.
   Future<SeedVault> addVault(
     String normalised,
     String password, {
@@ -772,8 +919,52 @@ class VaultKeeper {
     bool backedUp = true,
     bool isAgentVault = false,
     String? splitBackupId,
+    bool madeHere = false,
+  }) =>
+      _addVault(
+        (vaultKey) => _sealedHere(normalised, vaultKey),
+        (vault, key) => _host.sealHolds(vault, key, normalised),
+        password,
+        label: label,
+        backedUp: backedUp,
+        isAgentVault: isAgentVault,
+        splitBackupId: splitBackupId,
+        madeHere: madeHere,
+      );
+
+  /// [addVault] for a phrase this side never reads — a wallet a split backup
+  /// gave back in the Rust key core (phase 7b): [seal] makes the record under
+  /// the new vault key, and [holds] answers whether a vault already on this
+  /// phone, opened with its key, is the same phrase — both in the core. The
+  /// same refusal of a duplicate, before anything is sealed.
+  Future<SeedVault> addSealedVault(
+    Uint8List Function(Uint8List vaultKey) seal,
+    bool Function(SeedVault vault, Uint8List key) holds,
+    String password, {
+    String? label,
+    bool backedUp = true,
+    bool isAgentVault = false,
+    String? splitBackupId,
+    bool madeHere = false,
+  }) =>
+      _addVault(seal, holds, password,
+          label: label,
+          backedUp: backedUp,
+          isAgentVault: isAgentVault,
+          splitBackupId: splitBackupId,
+          madeHere: madeHere);
+
+  Future<SeedVault> _addVault(
+    Uint8List Function(Uint8List vaultKey) seal,
+    bool Function(SeedVault vault, Uint8List key) holds,
+    String password, {
+    String? label,
+    bool backedUp = true,
+    bool isAgentVault = false,
+    String? splitBackupId,
+    bool madeHere = false,
   }) async {
-    if (_vaultMnemonics.values.contains(normalised)) {
+    if (await _holdsPhrase(holds, password)) {
       // Silently adding a duplicate produces two wallets showing the same
       // balance, which reads as the money having doubled.
       throw Exception('This recovery phrase is already in this wallet.');
@@ -798,18 +989,20 @@ class VaultKeeper {
       // Time-based rather than positional, so deleting one never makes a later
       // id collide with an earlier account's reference to it.
       id: 'vault-${DateTime.now().microsecondsSinceEpoch}',
-      encryptedSeed: base64Encode(CryptoUtils.encrypt(normalised, vaultKey)),
+      encryptedSeed: base64Encode(seal(vaultKey)),
       salt: base64Encode(salt),
       wrappedKey: CryptoUtils.wrapKey(vaultKey, derived),
       backedUp: backedUp,
       label: label,
       isAgentVault: isAgentVault,
       splitBackupId: splitBackupId,
+      madeHere: madeHere,
     );
 
     _vaults.add(vault);
+    // Held for the switch that follows an add, as every caller makes; where
+    // [opensActiveOnly], that switch closes whichever wallet it leaves.
     _vaultKeys[vault.id] = vaultKey;
-    _vaultMnemonics[vault.id] = normalised;
     try {
       await _writeVaults();
     } catch (_) {
@@ -820,7 +1013,6 @@ class VaultKeeper {
       // truth rather than half of it.
       _vaults.remove(vault);
       _vaultKeys.remove(vault.id);
-      _vaultMnemonics.remove(vault.id);
       rethrow;
     }
 
@@ -901,7 +1093,7 @@ class VaultKeeper {
 
     final wasActive = _activeVaultId == vaultId;
     final next = _vaults.firstWhere((v) => v.id != vaultId);
-    if (wasActive && _vaultMnemonics[next.id] == null) {
+    if (wasActive && _vaultKeys[next.id] == null) {
       throw VaultLocked(next.id);
     }
 
@@ -932,8 +1124,7 @@ class VaultKeeper {
     }
 
     _vaults.removeAt(i);
-    _vaultKeys.remove(vaultId);
-    _vaultMnemonics.remove(vaultId);
+    _dropKey(vaultId);
     await _writeVaults();
 
     if (wasActive) {
@@ -942,20 +1133,22 @@ class VaultKeeper {
     }
   }
 
-  /// Switches the wallet onto another stored phrase, one already open in
-  /// this session, and has the wallet rebuilt on it — see
-  /// [VaultHost.switched].
+  /// Switches the wallet onto another stored phrase, one whose key is held,
+  /// and has the wallet rebuilt on it — see [VaultHost.switched].
   ///
   /// Throws [VaultLocked] for a phrase that is stored and not open; the way
-  /// through is [openVaultWithPassword].
+  /// through is [openVaultWithPassword], or [openVaultWithPin] for the
+  /// wallet the PIN opens. Where [opensActiveOnly] every other wallet is
+  /// closed, so that is every switch, and the wallet left is closed in turn.
   Future<void> switchVault(String vaultId) async {
     if (vaultId == _activeVaultId) return;
     final vault = _vaults.firstWhere(
       (v) => v.id == vaultId,
       orElse: () => throw Exception('No such recovery phrase in this wallet.'),
     );
-    final mnemonic = _vaultMnemonics[vaultId];
-    if (mnemonic == null) {
+    // Every door that opens a wallet keeps its key, and nothing else of it.
+    final vaultKey = _vaultKeys[vaultId];
+    if (vaultKey == null) {
       // **A type, because the wallet is fine and the sentence said it was
       // not.** Reported 18 August 2026: a phrase imported perfectly well, and
       // tapping it answered *"That recovery phrase could not be opened."* —
@@ -972,7 +1165,12 @@ class VaultKeeper {
 
     _activeVaultId = vault.id;
     await SecureStorage.saveActiveVaultId(vault.id);
-    await _host.switched(vault, mnemonic);
+    await _host.switched(vault, vaultKey);
+    if (opensActiveOnly) {
+      for (final other in [..._vaultKeys.keys]) {
+        if (other != vault.id) _dropKey(other);
+      }
+    }
   }
 
   /// Opens one stored phrase with the password, then switches onto it.
@@ -992,21 +1190,34 @@ class VaultKeeper {
       orElse: () => throw Exception('No such recovery phrase in this wallet.'),
     );
 
-    final String mnemonic;
-    final Uint8List key;
-    try {
-      final derived =
-          await CryptoUtils.deriveKey(password, base64Decode(vault.salt));
-      key = _vaultKey(vault, derived);
-      mnemonic = CryptoUtils.decrypt(base64Decode(vault.encryptedSeed), key);
-    } catch (_) {
-      // **The password, not the phrase.** Saying anything about the phrase
-      // here is the defect this whole change exists to fix.
-      throw const WrongPassword();
-    }
+    final key = await _keyFrom(vault, password);
+    // **The password, not the phrase.** Saying anything about the phrase
+    // here is the defect this whole change exists to fix.
+    if (key == null) throw const WrongPassword();
 
     _vaultKeys[vaultId] = key;
-    _vaultMnemonics[vaultId] = mnemonic;
+    await switchVault(vaultId);
+  }
+
+  /// Opens the wallet the PIN was armed for with six digits, then switches
+  /// onto it — the other way out of [VaultLocked], for that one wallet
+  /// (O28: "switching asks for the password or PIN").
+  ///
+  /// Throws [WrongPin] for a wrong PIN, counted as every PIN is, and
+  /// [VaultLocked] again when the PIN opens another wallet than [vaultId]:
+  /// the blob names its own, and nothing else is opened.
+  Future<void> openVaultWithPin(String vaultId, String pin) async {
+    final stored = await SecureStorage.getPinBlob();
+    if (stored == null || stored.isEmpty) {
+      throw const HardwareKeyUnavailable();
+    }
+    final payload = jsonDecode(utf8.decode(await PinLock.open(stored, pin)))
+        as Map<String, dynamic>;
+    if (payload['vault'] != vaultId ||
+        !_vaults.any((v) => v.id == vaultId)) {
+      throw VaultLocked(vaultId);
+    }
+    _vaultKeys[vaultId] = base64Decode(payload['key'] as String);
     await switchVault(vaultId);
   }
 
@@ -1026,7 +1237,70 @@ class VaultKeeper {
     return CryptoUtils.unwrapKey(wrapped, derivedKey);
   }
 
-  /// Opens the wallet with [password]: every vault it opens goes into memory.
+  /// The key [vault]'s phrase is sealed under, from [password], or null when
+  /// [password] does not open it.
+  ///
+  /// **The phrase is not opened to find out** (phase 6b). A wrapped key
+  /// carries the tag of its own wrapping, which a wrong password fails; a
+  /// vault sealed before wrapping has only the record's tag, and the host
+  /// opens the record where it keeps phrases ([VaultHost.sealOpens]).
+  Future<Uint8List?> _keyFrom(SeedVault vault, String password) async {
+    try {
+      final derived =
+          await CryptoUtils.deriveKey(password, base64Decode(vault.salt));
+      final key = _vaultKey(vault, derived);
+      if (vault.wrappedKey == null && !_host.sealOpens(vault, key)) return null;
+      return key;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether the active wallet's key is held: an unlock, or a wallet just
+  /// saved, until the lock.
+  bool get _holdsActiveKey =>
+      _activeVaultId != null && _vaultKeys[_activeVaultId] != null;
+
+  /// Whether a stored wallet already holds the phrase being added — every
+  /// one, by its key: the key held, or the one [password] opens, used for
+  /// this question and dropped. [holds] asks the host ([VaultHost.sealHolds])
+  /// or the core, so no stored phrase is decrypted here to compare.
+  Future<bool> _holdsPhrase(
+      bool Function(SeedVault vault, Uint8List key) holds, String password) async {
+    final opened = <Uint8List>[];
+    try {
+      final answers = await Future.wait(_vaults.map((vault) async {
+        var key = _vaultKeys[vault.id];
+        if (key == null) {
+          key = await _keyFrom(vault, password);
+          if (key != null) opened.add(key);
+        }
+        return key != null && holds(vault, key);
+      }));
+      return answers.contains(true);
+    } finally {
+      for (final key in opened) {
+        key.fillRange(0, key.length, 0);
+      }
+    }
+  }
+
+  /// Writes over [vaultId]'s key and forgets it — the wallet is closed.
+  void _dropKey(String vaultId) {
+    final key = _vaultKeys.remove(vaultId);
+    key?.fillRange(0, key.length, 0);
+  }
+
+  /// [_dropKey] for every wallet.
+  void _dropKeys() {
+    for (final id in [..._vaultKeys.keys]) {
+      _dropKey(id);
+    }
+  }
+
+  /// Opens the wallet with [password]: the key of every vault it opens goes
+  /// into memory — the active vault's alone where [opensActiveOnly] — and no
+  /// phrase does. The wallet is built on the active one ([VaultHost.opened]).
   ///
   /// **A refusal changes nothing in memory.** This is also the password check
   /// of an open wallet — revealing the phrase, making a split backup, creating
@@ -1037,7 +1311,7 @@ class VaultKeeper {
   /// looking at their open wallet (the owner's device report of 14 October
   /// 2026). Everything is read and opened into locals; the fields are written
   /// only once the vault being opened has opened.
-  Future<String> loadSeed(String password) async {
+  Future<void> loadSeed(String password) async {
     final stored = await _readVaults();
     if (stored.isEmpty) {
       // **Two different sentences, and they were one.** A device with no
@@ -1051,7 +1325,7 @@ class VaultKeeper {
     }
     // Whichever was open last, falling back to the first. The others are
     // available to switch to without asking for the password again, since they
-    // are all encrypted under it.
+    // are all encrypted under it — except where [opensActiveOnly] (O28).
     //
     // The stored id is checked against what actually exists: a wallet removed
     // on another install, or a storage entry that outlived its vault, must not
@@ -1072,33 +1346,26 @@ class VaultKeeper {
     }
 
     // Every vault is opened here, not just the active one, so switching later
-    // costs nothing and never asks for the password again.
+    // costs nothing and never asks for the password again — except where
+    // [opensActiveOnly] (O28), which opens the active one alone: every key
+    // held is a phrase held, and the measurement of 30 October 2026 found all
+    // three wallets' phrases in memory after a password unlock and a lock
+    // (`docs/MEMORY_RESIDUE.md#sixth`).
     //
     // In parallel on purpose: the key derivation is 600k PBKDF2 rounds, and
     // running three of them one after another would triple the wait on the one
     // screen where the user is already typing a password and waiting.
     //
-    // The exposure is worth naming: an unlocked wallet now holds every phrase
-    // in memory rather than one. That is a difference of degree — it already
-    // held a phrase, and _clearSensitiveData drops all of them together — and
-    // the alternative is either keeping the password around, which is worse,
-    // or asking for it on every switch, which teaches people to type it often.
-    final opened = await Future.wait(stored.map((v) async {
-      try {
-        final derived =
-            await CryptoUtils.deriveKey(password, base64Decode(v.salt));
-        final key = _vaultKey(v, derived);
-        return MapEntry(v.id,
-            (CryptoUtils.decrypt(base64Decode(v.encryptedSeed), key), key));
-      } catch (_) {
-        // One vault written under a different password, or corrupt, must not
-        // stop the others opening. It simply cannot be switched to.
-        return MapEntry(v.id, null);
-      }
-    }));
+    // **Keys, not phrases** (phase 6b): a vault opens by its key's tag, and
+    // the wallet is built from the active record and its key by the host.
+    final opened = await Future.wait(
+        (opensActiveOnly ? [vault] : stored).map((v) async =>
+            // One vault written under a different password, or corrupt, must
+            // not stop the others opening. It simply cannot be switched to.
+            MapEntry(v.id, await _keyFrom(v, password))));
 
-    final mnemonic = opened.firstWhere((e) => e.key == vault.id).value?.$1;
-    if (mnemonic == null) {
+    final activeKey = opened.firstWhere((e) => e.key == vault.id).value;
+    if (activeKey == null) {
       // The first vault failing is a wrong password, which is what the caller
       // and the unlock screen expect to hear.
       throw const WrongPassword();
@@ -1108,25 +1375,51 @@ class VaultKeeper {
       ..clear()
       ..addAll(stored);
     _activeVaultId = vault.id;
-    _vaultKeys
-      ..clear()
-      ..addEntries(opened
-          .where((e) => e.value != null)
-          .map((e) => MapEntry(e.key, e.value!.$2)));
-    _vaultMnemonics
-      ..clear()
-      ..addEntries(opened
-          .where((e) => e.value != null)
-          .map((e) => MapEntry(e.key, e.value!.$1)));
+    _dropKeys();
+    _vaultKeys.addEntries(opened
+        .where((e) => e.value != null)
+        .map((e) => MapEntry(e.key, e.value!)));
 
     final derived =
         await CryptoUtils.deriveKey(password, base64Decode(vault.salt));
     await _openWith(
       vault: vault,
-      mnemonic: mnemonic,
+      vaultKey: activeKey,
       encryptionKey: await _resolveAccountKey(vault.id, password, derived),
     );
-    return mnemonic;
+  }
+
+  /// The wallet's recovery phrase — the open one's, or the one [loadSeed]
+  /// would open — after [password] is typed for it: for Back up, which shows
+  /// it, and a split backup, which splits it.
+  ///
+  /// **The one door that decrypts a phrase in Dart** (phase 6b): the person
+  /// asked to see it, as at its making and its import. It opens nothing and
+  /// changes nothing — this was [loadSeed], which opened the wallet again to
+  /// return the phrase. Read from the stored record, so it answers whether or
+  /// not a wallet is open, as [loadSeed] did. Throws [WrongPassword] for a
+  /// wrong [password], which the screens count.
+  Future<String> revealPhrase(String password) async {
+    final stored = await _readVaults();
+    if (stored.isEmpty) {
+      if (_vaultRecordUnreadable) throw const VaultRecordUnreadable();
+      throw Exception('No stored seed');
+    }
+    final id = _activeVaultId ?? await SecureStorage.getActiveVaultId();
+    final vault =
+        stored.firstWhere((v) => v.id == id, orElse: () => stored.first);
+    if (!vault.hasPassword) {
+      throw Exception('This wallet has no password yet. Unlock it with your '
+          'PIN, and set a password when it asks.');
+    }
+    final key = await _keyFrom(vault, password);
+    if (key == null) throw const WrongPassword();
+    try {
+      return CryptoUtils.decrypt(base64Decode(vault.encryptedSeed), key);
+    } finally {
+      // Derived for this question, not the held key.
+      key.fillRange(0, key.length, 0);
+    }
   }
 
   /// The key imported private keys sit under, whichever shape this wallet is in.
@@ -1273,11 +1566,11 @@ class VaultKeeper {
   /// of them rather than as an error.
   Future<void> _openWith({
     required SeedVault vault,
-    required String mnemonic,
+    required Uint8List vaultKey,
     required Uint8List encryptionKey,
   }) async {
     _encryptionKey = encryptionKey;
-    await _host.opened(vault, mnemonic);
+    await _host.opened(vault, vaultKey);
   }
 
   /// Hands the device key a copy of what this unlock is holding.
@@ -1381,14 +1674,14 @@ class VaultKeeper {
   /// fingerprint, a removed lock screen, a restored backup. Both are ordinary
   /// and neither means the wallet is lost: the password opens it and arms this
   /// again.
-  Future<String> unlockWithDeviceKey() async {
+  Future<void> unlockWithDeviceKey() async {
     final stored = await SecureStorage.getDeviceKeyBlob();
     if (stored == null || stored.isEmpty) {
       throw const HardwareKeyUnavailable();
     }
 
     final plain = await HardwareKey.unwrap(base64Decode(stored));
-    return _openFromPayload(utf8.decode(plain));
+    await _openFromPayload(utf8.decode(plain));
   }
 
   /// Opens the wallet with six digits, no password and no system gate.
@@ -1397,16 +1690,15 @@ class VaultKeeper {
   /// throttle as the password — and [HardwareKeyUnavailable] when the device
   /// key is gone, which is not the person's fault and needs a different
   /// sentence on screen.
-  Future<String> unlockWithPin(String pin) async {
+  Future<void> unlockWithPin(String pin) async {
     final stored = await SecureStorage.getPinBlob();
     if (stored == null || stored.isEmpty) {
       throw const HardwareKeyUnavailable();
     }
 
     final opened = await PinLock.openAndUpgrade(stored, pin);
-    final vault = await _openFromPayload(utf8.decode(opened.secret));
+    await _openFromPayload(utf8.decode(opened.secret));
     await _storeUpgradedPin(stored, opened.upgraded);
-    return vault;
   }
 
   /// A PIN sealed in format 1 moved to format 2 ([PinLock.version]) by the
@@ -1585,7 +1877,7 @@ class VaultKeeper {
     }
   }
 
-  Future<String> _openFromPayload(String json) async {
+  Future<void> _openFromPayload(String json) async {
     final payload = jsonDecode(json) as Map<String, dynamic>;
     final vaultKey = base64Decode(payload['key'] as String);
     final encryptionKey = base64Decode(payload['enc'] as String);
@@ -1597,26 +1889,21 @@ class VaultKeeper {
 
     final vault = _vaults.firstWhere((v) => v.id == payload['vault'],
         orElse: () => _vaults.first);
-    final mnemonic =
-        CryptoUtils.decrypt(base64Decode(vault.encryptedSeed), vaultKey);
 
     _activeVaultId = vault.id;
-    _vaultKeys
-      ..clear()
-      ..[vault.id] = vaultKey;
     // Only the vault this key belongs to. The others need their own keys, and
     // asking for the password to reach them is correct — it is the same rule
-    // as switching wallets, not a limitation of this path.
-    _vaultMnemonics
-      ..clear()
-      ..[vault.id] = mnemonic;
+    // as switching wallets, not a limitation of this path. A key that does
+    // not open the record — a payload naming a vault since removed — fails in
+    // the host, which opens it.
+    _dropKeys();
+    _vaultKeys[vault.id] = vaultKey;
 
     await _openWith(
       vault: vault,
-      mnemonic: mnemonic,
+      vaultKey: vaultKey,
       encryptionKey: encryptionKey,
     );
-    return mnemonic;
   }
 
   /// Drops the device key and what it was holding. Called when quick unlock is
@@ -1632,8 +1919,7 @@ class VaultKeeper {
   /// would leave the app unable to name the phrases it has — which broke
   /// saveSeed, since that ends by wiping memory as part of its normal flow.
   void _clearSensitiveData() {
-    _vaultMnemonics.clear();
-    _vaultKeys.clear();
+    _dropKeys();
     _encryptionKey = null;
     _host.forget();
   }
@@ -1642,8 +1928,7 @@ class VaultKeeper {
   /// vaults exist, so a locked wallet reveals nothing about how many phrases
   /// it holds until it is opened again.
   void lock() {
-    _vaultMnemonics.clear();
-    _vaultKeys.clear();
+    _dropKeys();
     _vaults.clear();
     _unparsed = const [];
     _activeVaultId = null;

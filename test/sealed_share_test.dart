@@ -2,7 +2,11 @@
 // the real cost and not a test setting: about 0.6 s to seal and 0.4 s to open
 // on the development Mac alone, many times that in a full parallel run, where
 // tests that seal and open several shares passed the default thirty seconds.
-@Timeout(Duration(minutes: 2))
+// Two minutes then proved short too: the 128 MiB, four-pass case (and once
+// four cases) passed it late in loaded full runs on 20, 22, 29 and 30
+// October, while the file alone takes about ten seconds. Six, the work
+// itself unchanged.
+@Timeout(Duration(minutes: 6))
 library;
 
 import 'dart:convert';

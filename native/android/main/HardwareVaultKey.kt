@@ -241,7 +241,7 @@ class HardwareVaultKey(
         // Logged for the same reason every other refusal here is: the Dart side
         // has one answer for all of them, and a screen reporting "unknown" with
         // nothing anywhere saying why is how a day goes.
-        android.util.Log.w(LOG_TAG, "describe refused", e)
+        DebugLog.w(LOG_TAG, "describe refused", e)
         mapOf("exists" to false, "backing" to "unknown", "precise" to false)
     }
 
@@ -273,7 +273,7 @@ class HardwareVaultKey(
             return try {
                 generatePreferringStrongBox(builder)
             } catch (e: Exception) {
-                android.util.Log.w(LOG_TAG, "device key generation refused", e)
+                DebugLog.w(LOG_TAG, "device key generation refused", e)
                 null
             }
         }
@@ -307,10 +307,10 @@ class HardwareVaultKey(
         return try {
             generatePreferringStrongBox(builder)
         } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
-            android.util.Log.w(LOG_TAG, "key generation refused", e)
+            DebugLog.w(LOG_TAG, "key generation refused", e)
             null
         } catch (e: Exception) {
-            android.util.Log.w(LOG_TAG, "key generation refused", e)
+            DebugLog.w(LOG_TAG, "key generation refused", e)
             null
         }
     }
@@ -410,7 +410,7 @@ class HardwareVaultKey(
             // these into "this device cannot", and quick unlock then fails with
             // nothing anywhere saying why. That cost a day: the keystore was
             // refusing for a reason it was perfectly willing to state.
-            android.util.Log.w(LOG_TAG, "wrap refused", e)
+            DebugLog.w(LOG_TAG, "wrap refused", e)
             result.error("unavailable", e.message ?: "Keystore refused.", null)
         }
     }
@@ -512,7 +512,7 @@ class HardwareVaultKey(
                     try {
                         result.success(use(authed))
                     } catch (e: Exception) {
-                        android.util.Log.w(LOG_TAG, "authorised use refused", e)
+                        DebugLog.w(LOG_TAG, "authorised use refused", e)
                         result.error("unavailable", e.message ?: "Refused.", null)
                     }
                 }

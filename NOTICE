@@ -11,6 +11,10 @@ LICENSES/:
   - SLIP-39 word list and test vectors — MIT, Copyright 2019 SatoshiLabs
   - Unicode normalization test cases — Unicode License v3,
     Copyright © 1991-2026 Unicode, Inc.
+  - The key core's test vectors (native/key_core/src/vectors.rs) — from
+    BIP-39, BIP-32, BIP-340, BIP-341, BIP-143, SLIP-10, RFC 8032, CIP-0003,
+    ZIP-320, Bitcoin Core, Bitcoin Cash Node, alloy and other sources, each
+    under its own licence as THIRD_PARTY_NOTICES.md lists
 
 ---
 

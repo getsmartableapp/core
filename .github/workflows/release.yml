@@ -10,8 +10,8 @@
 # in the public Sigstore log, that this archive was built from this tag by this
 # workflow. Anyone can check it without trusting us:
 #
-#   gh attestation verify smartable-wallet-core-v1.0.0.tar.gz \
-#     --repo getsmartable-app/core
+#   gh attestation verify smartable-wallet-core-vX.Y.Z.tar.gz \
+#     --repo getsmartableapp/core
 #
 # The same attestation is attached to the release as
 # `smartable-wallet-core-vX.Y.Z.tar.gz.intoto.jsonl` (a Sigstore bundle), so it

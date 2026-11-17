@@ -3,7 +3,7 @@
 # It checks practices rather than code — pinned actions, token permissions,
 # branch protection, a security policy, signed releases, dependency scanning —
 # and publishes a score anyone can read at
-# https://securityscorecards.dev/viewer/?uri=github.com/getsmartable-app/core
+# https://securityscorecards.dev/viewer/?uri=github.com/getsmartableapp/core
 #
 # `publish_results: true` makes the score public and is what the README badge
 # reads. Scorecard verifies the workflow that produced it, so this file stays

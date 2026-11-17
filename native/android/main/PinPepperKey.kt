@@ -83,7 +83,7 @@ class PinPepperKey {
     private fun existing(): SecretKey? = try {
         keystore().getKey(ALIAS, null) as? SecretKey
     } catch (e: Exception) {
-        android.util.Log.w(LOG_TAG, "pin pepper read refused", e)
+        DebugLog.w(LOG_TAG, "pin pepper read refused", e)
         null
     }
 
@@ -107,7 +107,7 @@ class PinPepperKey {
             strongBoxThenTee(builder)
             existing() != null
         } catch (e: Exception) {
-            android.util.Log.w(LOG_TAG, "pin pepper generation refused", e)
+            DebugLog.w(LOG_TAG, "pin pepper generation refused", e)
             false
         }
     }
@@ -147,7 +147,7 @@ class PinPepperKey {
         } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
             result.error("key_gone", "The PIN's device key was invalidated.", null)
         } catch (e: Exception) {
-            android.util.Log.w(LOG_TAG, "pin pepper refused", e)
+            DebugLog.w(LOG_TAG, "pin pepper refused", e)
             result.error("unavailable", e.message ?: "Keystore refused.", null)
         }
     }

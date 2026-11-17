@@ -1,0 +1,109 @@
+[package]
+name = "key_core"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Smartable key core: the seed and the keys derived from it live here and nowhere else."
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+# Exact versions, no carets: a patch release of a crate that holds a seed is a
+# release somebody reads first. Each moves deliberately, after a vendor check.
+[dependencies]
+bip39 = { version = "=3.0.0", default-features = false, features = ["zeroize"] }
+bip32 = { version = "=0.6.0", default-features = false, features = ["alloc", "secp256k1-ffi"] }
+secp256k1 = { version = "=0.33.1", default-features = false, features = ["std", "recovery"] }
+# SHA-256 for BIP-340's auxiliary bytes (`keys::schnorr_sign`); already built
+# for `bip32`'s fingerprints, so nothing new enters the tree.
+sha2 = { version = "=0.11.1", default-features = false }
+zeroize = { version = "=1.9.1", default-features = false, features = ["alloc"] }
+# Ed25519 for the SLIP-10 networks (phase 4). `zeroize` erases a `SigningKey`
+# and its expanded form when dropped; no `fast` — no precomputed basepoint
+# tables, the owner's decision O15. The backend is `fiat` (O14,
+# `.cargo/config.toml`). `hazmat` is Cardano's (O17): its keys are already
+# extended (`kL ‖ kR`), so they are signed with `hazmat::raw_sign` rather than
+# expanded from a seed.
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["zeroize", "hazmat"] }
+# The scalar and the base point for Cardano's BIP32-Ed25519 (O17); the same
+# crate `ed25519-dalek` builds, so nothing new enters the tree.
+curve25519-dalek = { version = "=5.0.0", default-features = false, features = ["zeroize"] }
+# HMAC-SHA512 for SLIP-10's ed25519 derivation (`keys::slip10_ed25519`), which
+# the core writes itself (O13); already built for `bip32`'s, like `sha2`.
+hmac = { version = "=0.13.0", default-features = false }
+# The Stark curve for Starknet (O20): its public key, RFC 6979 signature and
+# verification. starknet-rs's own crate; the curve is not written here.
+starknet-crypto = { version = "=0.8.1", default-features = false }
+# The 256-bit arithmetic of Starknet's key grind (O21), on the stack and
+# erasable; the version `starknet-crypto` builds, so nothing new enters.
+crypto-bigint = { version = "=0.5.5", default-features = false, features = ["generic-array", "zeroize"] }
+# AES-256-GCM, to open the sealed phrase here rather than in Dart (phase 6a,
+# `kc_open_sealed`). 0.10.3, the owner's decision O27: in the local registry,
+# and the version RUSTSEC-2023-0096 was fixed in — the tag is checked before
+# anything is decrypted. No `getrandom`: opening needs no nonce of its own.
+aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "zeroize"] }
+# Named only for their `zeroize` features, the versions `aes-gcm` builds: the
+# AES round keys and the GHASH key written over when dropped. The stack the
+# cipher used is the scrub's, as for every call.
+aes = { version = "=0.8.4", default-features = false, features = ["zeroize"] }
+ghash = { version = "=0.5.1", default-features = false, features = ["zeroize"] }
+polyval = { version = "=0.6.2", default-features = false, features = ["zeroize"] }
+# Constant-time equality for `kc_matches_phrase` (phase 6c): two seeds compared
+# without the time telling how many leading bytes agree. The version every
+# curve crate here already builds, so nothing new enters the tree.
+subtle = { version = "=2.6.1", default-features = false }
+# RLP, for "sign what you see" (2c, the owner's decisions P3 and O33): the core
+# reads an EVM transaction's unsigned bytes and holds them to what the app
+# built before it signs them. Alloy's, from the local registry; its one
+# dependency, `bytes`, comes with it.
+alloy-rlp = { version = "=0.3.16", default-features = false }
+# Keccak-256, the hash an EVM transaction is signed over, now taken here
+# rather than handed in (2c). The version `starknet-crypto` already builds,
+# so nothing new enters the tree for it.
+sha3 = { version = "=0.10.9", default-features = false }
+# RIPEMD-160 for a Bitcoin key's and script's HASH160 ("sign what you see" for
+# the Bitcoin family, 2d, O36); the version `bip32` already builds for its
+# identifiers, so nothing new enters the tree.
+ripemd = { version = "=0.2.0", default-features = false }
+# JSON, for EIP-712 typed data read here rather than hashed in Dart ("sign
+# what you see", 2e, the owner's decision O42). Parsing is not trusted to be
+# the check: the input is capped before it is parsed, and `src/eip712.rs`
+# holds what was parsed to the app's limits and one spelling per value.
+# From the local registry; it brings `serde_core`, `itoa`, `memchr` and
+# `zmij`.
+serde_json = { version = "=1.0.154", default-features = false, features = ["std"] }
+# BLAKE2b-256, the hash a Sui signature is over: the core takes it itself of
+# the intent message it read ("the screen shows what the core read", 2f, the
+# owner's decision O60 of 4 November 2026). The version `starknet-crypto`
+# already builds, so nothing new enters the tree.
+blake2 = { version = "=0.10.6", default-features = false }
+# The split backup in the core (phase 7a, O61–O63): the operating system's
+# random bytes for a split's coefficients and each seal's salt and nonce
+# (O62) — the version already in `Cargo.lock` — and Argon2id for a share's
+# key with the numbers its body states (O63), RustCrypto's, from the local
+# registry, its memory blocks written over when dropped; `base64ct`, the
+# constant-time Base64 `argon2` already builds, for the body's `salt` and
+# `ct`.
+getrandom = { version = "=0.2.17", default-features = false }
+argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "zeroize"] }
+base64ct = { version = "1", default-features = false, features = ["alloc"] }
+
+[features]
+# libsecp256k1's small precomputed tables: about a third of the library's size,
+# and slower verification — which the recovery check after every signature
+# uses. On by default, the owner's decision O8 of 27 October 2026;
+# `--no-default-features` builds the full tables, for comparison only.
+default = ["lowmemory"]
+lowmemory = ["secp256k1/lowmemory"]
+
+[lints.rust]
+# `src/lib.rs` reads curve25519-dalek's backend flag to refuse a build without
+# it (O14).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(curve25519_dalek_backend, values("fiat"))'] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

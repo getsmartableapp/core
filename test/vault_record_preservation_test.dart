@@ -9,10 +9,12 @@
 // holding nothing else readable says so instead of "no wallet", and erasing
 // the wallet still erases it.
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smartable_wallet_core/core/crypto_utils.dart';
 import 'package:smartable_wallet_core/core/secure_storage.dart';
 import 'package:smartable_wallet_core/core/seed_vault.dart';
 import 'package:smartable_wallet_core/core/vault_keeper.dart';
@@ -31,11 +33,43 @@ const Map<String, Object?> _future = {
 class _Host implements VaultHost {
   bool open = false;
 
-  @override
-  Future<void> opened(SeedVault vault, String mnemonic) async => open = true;
+  /// The phrase the record handed over opens to, as a build without the key
+  /// core opens it.
+  String? phrase;
+
+  String _open(SeedVault vault, Uint8List key) =>
+      CryptoUtils.decrypt(base64Decode(vault.encryptedSeed), key);
 
   @override
-  Future<void> switched(SeedVault vault, String mnemonic) async => open = true;
+  Future<void> opened(SeedVault vault, Uint8List vaultKey) async {
+    phrase = _open(vault, vaultKey);
+    open = true;
+  }
+
+  @override
+  Future<void> switched(SeedVault vault, Uint8List vaultKey) async {
+    phrase = _open(vault, vaultKey);
+    open = true;
+  }
+
+  @override
+  bool sealOpens(SeedVault vault, Uint8List key) {
+    try {
+      _open(vault, key);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  bool sealHolds(SeedVault vault, Uint8List key, String phrase) {
+    try {
+      return _open(vault, key) == phrase;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   void forget() => open = false;
@@ -76,8 +110,11 @@ void main() {
   });
 
   group('the keeper', () {
+    late _Host host;
+
     Future<VaultKeeper> sealed() async {
-      final keeper = VaultKeeper(_Host());
+      host = _Host();
+      final keeper = VaultKeeper(host);
       await keeper.saveSeed(_phrase, _password,
           accountSpan: 1, derivedCount: 1, backedUp: true);
       // A newer build wrote a second wallet this one cannot read.
@@ -87,7 +124,8 @@ void main() {
 
     test('a change to a wallet it can read keeps the one it cannot', () async {
       final keeper = await sealed();
-      expect(await keeper.loadSeed(_password), _phrase);
+      await keeper.loadSeed(_password);
+      expect(host.phrase, _phrase);
       await keeper.updateVault('primary', (v) => v.copyWith(label: 'Savings'));
       final after = await _stored();
       expect(after, contains(equals(_future)), reason: 'the unread phrase survives the write');
@@ -100,7 +138,8 @@ void main() {
       await keeper.changePassword(_password, 'another password 2');
       expect(await _stored(), contains(equals(_future)));
       keeper.lock();
-      expect(await keeper.loadSeed('another password 2'), _phrase);
+      await keeper.loadSeed('another password 2');
+      expect(host.phrase, _phrase);
     });
 
     test('a record holding nothing readable is said to be unreadable, not empty',

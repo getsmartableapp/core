@@ -18,9 +18,14 @@ The review covers the code that keeps the wallet non-custodial on the device:
 - biometric unlock and when it is offered;
 - one lockout counter, measured on the boot clock;
 - SLIP-39 split backup and the sealing of each share;
+- the Rust key core in `native/key_core/`: the seed and the keys derived from
+  it held behind handles, the sealed phrase opened and a new one sealed there,
+  an imported key opened there from its record, each network's transaction or
+  message read and hashed there before it is signed, the split backup made,
+  checked and restored there, and the stack overwritten before every return;
 - the tests and published vectors included in this repository.
 
-Chain modules, transaction construction, review and signing, address
+Chain modules, transaction construction, the review screens, address
 validation, hardware-wallet integration, the application UI, the backend and
 RPC proxy, commercial routing and release configuration are not published here
 and are outside this document.
@@ -84,12 +89,18 @@ At minimum:
 flutter pub get --enforce-lockfile
 flutter analyze
 flutter test
+(cd native/key_core && cargo test --locked && cargo test --release --locked)
+(cd native/key_core/dart && dart pub get && dart analyze && dart test)
 ```
 
-The CI workflow runs these on Linux and macOS for every push, and the release
-workflow runs them again before it publishes anything.
+The CI workflow runs the Flutter checks and the key core's `cargo test` on
+Linux and macOS for every push, and the release workflow runs the Flutter
+checks again before it publishes anything. The binding's `dart test` builds
+the crate for Android through its hook and needs the Android NDK the hook
+pins, so it is run where that is installed and recorded in the release notes.
 
-The native files under `native/` are published for review; this repository
+The Kotlin and Swift files under `native/android/` and `native/ios/` are
+published for review; this repository
 has no Android or iOS project and does not build or test them. Their tests
 (`HardwareVaultKeyRulesTest.kt`, `PinPepperKeyRulesTest.kt`,
 `HardwareVaultKeyTests.swift`, `PinPepperKeyTests.swift`) are published beside
@@ -155,6 +166,23 @@ Record the exact command, date, source commit and result in the release notes.
 - [ ] Each share is sealed under a key derived from the wallet password before
       it leaves the device.
 - [ ] A share file this build cannot read is reported, never dropped.
+
+### Key core
+
+- [ ] No secret crosses the C interface except through the export calls the
+      export screens use.
+- [ ] A closed or unknown handle is refused and never reaches another
+      session's seed.
+- [ ] Each signing call reads and hashes what it signs; a key that has a
+      reading signs no bare digest.
+- [ ] Every entry point writes zeros over the stack it used, and a panic
+      becomes an error code rather than unwinding into the caller.
+- [ ] A split backup made in the core is checked there by recombining every
+      set of the threshold, and a restore opens a session without making the
+      phrase text.
+- [ ] The build refuses any curve25519-dalek backend but `fiat`.
+- [ ] The toolchain (`rust-toolchain.toml`) and `Cargo.lock` are pinned, and
+      the build runs offline and locked.
 
 ### Supply chain and release
 

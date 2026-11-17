@@ -6,8 +6,10 @@ project.
 This repository contains the components that keep the wallet non-custodial on
 the device: how a typed secret becomes key material, encrypted-only secret
 storage, how a recovery phrase is sealed and every way it is opened, the app PIN
-and its lockout, biometric unlock, SLIP-39 split backup and the platform key the
-wallet is sealed under.
+and its lockout, biometric unlock, SLIP-39 split backup, the platform key the
+wallet is sealed under, and the Rust key core that holds the seed, signs and
+makes and restores the split backup — in every app build since 15 November
+2026.
 
 ## Included
 
@@ -20,8 +22,10 @@ wallet is sealed under.
   `slip39_wordlist.dart`, `sealed_share.dart`, `share_store.dart`,
   `paper_share_store.dart`.
 - Their tests and the published vectors they read, under `test/`.
-- The native key and boot-clock code for Android and iOS, under `native/`,
-  published for review and not built here.
+- The native key and boot-clock code for Android and iOS, under
+  `native/android/` and `native/ios/`, published for review and not built here.
+- The Rust key core, under `native/key_core/`: the crate, its C interface, its
+  Dart binding and their tests, built and tested here with Cargo and Dart.
 - `CHANGELOG.md`, `CONTRIBUTING.md` and `docs/`: the version history, how to
   take part, and how versions are numbered, made and checked.
 - `.github/`: the checks and the release workflow, the issue and pull request
@@ -39,8 +43,9 @@ The following remain proprietary and are not part of this repository:
 
 - Product UI and application screens.
 - Blockchain modules and network integrations.
-- Transaction construction, review and signing, including hardware-wallet
-  signing.
+- Transaction construction and the review screens, and hardware-wallet
+  signing. The key core reads what it signs, and that reading is published;
+  how the application builds a transaction and what its screens show are not.
 - Marketing pages and product copy.
 - Backend and proxy infrastructure.
 - Commercial routing, fee and quota logic.

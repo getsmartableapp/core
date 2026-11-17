@@ -4,7 +4,7 @@ description: >-
   how a typed secret becomes key material, encrypted-only secret
   storage, the app PIN and its lockout, SLIP-39 split backup and the
   platform key the wallet is sealed under.
-version: 1.0.1
+version: 2.0.0
 repository: https://gitlab.com/getsmartable-app/core
 # Never to pub.dev: a package published there cannot be withdrawn.
 publish_to: none

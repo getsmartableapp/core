@@ -409,6 +409,12 @@ class SealedShare {
   static const bool _debugBuild = !bool.fromEnvironment('dart.vm.product') &&
       !bool.fromEnvironment('dart.vm.profile');
 
+  /// What a share is sealed with now: [ShareKdf.current], or a test's
+  /// [debugSealingKdf] in a debug build — here and in the Rust key core's
+  /// backup (phase 7a), which is handed these numbers.
+  static ShareKdf get sealingKdf =>
+      (_debugBuild ? debugSealingKdf : null) ?? ShareKdf.current;
+
   static Future<SealedShare> seal({
     required String mnemonic,
     required String password,
@@ -426,7 +432,7 @@ class SealedShare {
           'This share does not fit the backup it is being filed under.');
     }
     final salt = CryptoUtils.randomKey();
-    final kdf = (_debugBuild ? debugSealingKdf : null) ?? ShareKdf.current;
+    final kdf = sealingKdf;
     final key = await kdf.derive(password, salt);
     final createdAt = (now ?? DateTime.now()).toUtc();
     // The labels the share cannot vouch for, sealed beside it — see

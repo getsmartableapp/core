@@ -1,0 +1,3 @@
+/target/
+# Like modules/: the pubspec pins what matters exactly.
+/dart/pubspec.lock

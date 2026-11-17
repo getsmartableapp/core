@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a vulnerability privately
-    url: https://github.com/getsmartable-app/core/security/advisories/new
+    url: https://github.com/getsmartableapp/core/security/advisories/new
     about: A security issue goes here, never into a public issue.
   - name: Help with the Smartable Wallet app
     url: https://getsmartable.app

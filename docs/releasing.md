@@ -58,7 +58,9 @@ its change belongs to.
 1. The change lands in the application's source, with its tests.
 2. Its changelog entry is written, and `[Unreleased]` becomes the new version.
 3. The export writes the new version over this repository's previous state and
-   runs `flutter pub get`, `flutter analyze` and `flutter test` on the result.
+   runs `flutter pub get`, `flutter analyze` and `flutter test` on the result —
+   and, for the key core, `cargo test` debug and release, offline and locked,
+   then the binding's `dart pub get`, `dart analyze` and `dart test`.
 4. It arrives as a pull request named for the version. Its diff is exactly the
    change between the two versions, and the CI checks run on it before it is
    merged. The merge commit is tagged `vX.Y.Z`.
@@ -70,8 +72,9 @@ its change belongs to.
 
 **While GitHub Actions is not running** for this repository (from 1.0.1),
 steps 4 and 5 are done locally: `flutter pub get --enforce-lockfile`,
-`flutter analyze` and `flutter test` run on the exact tree that is committed
-and tagged, the commit and the tag are pushed to
+`flutter analyze` and `flutter test` — and the key core's `cargo test --locked`,
+debug and release, and the binding's tests — run on the exact tree that is
+committed and tagged, the commit and the tag are pushed to
 gitlab.com/getsmartable-app/core, and the archive and `SHA256SUMS` are made
 from the tag with the same `git archive` command the workflow uses and attached
 to the release. No provenance attestation is made, and the release notes say
@@ -94,7 +97,7 @@ archive was built by that workflow from the tagged commit, through GitHub's
 signing identity, without trusting us:
 
 ```bash
-gh attestation verify smartable-wallet-core-vX.Y.Z.tar.gz --repo getsmartable-app/core
+gh attestation verify smartable-wallet-core-vX.Y.Z.tar.gz --repo getsmartableapp/core
 ```
 
 The same attestation is attached to the release as
@@ -104,8 +107,11 @@ the check does not ask GitHub's attestation API for the statement:
 ```bash
 gh attestation verify smartable-wallet-core-vX.Y.Z.tar.gz \
   --bundle smartable-wallet-core-vX.Y.Z.tar.gz.intoto.jsonl \
-  --repo getsmartable-app/core
+  --repo getsmartableapp/core
 ```
+
+1.0.0's attestation was made before the repository's GitHub address changed,
+and names it `getsmartable-app/core`: the README gives that command.
 
 Neither shows that an application binary was built from this source. The core
 is not a build of the application, and no reproducible build is claimed.

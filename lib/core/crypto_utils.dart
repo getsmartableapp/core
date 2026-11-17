@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:isolate' show Isolate;
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart' as cg show SecretKey;
 import 'package:cryptography/dart.dart' as cg show DartArgon2id;
+import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:pointycastle/export.dart';
 import 'package:webcrypto/webcrypto.dart';
 
@@ -51,15 +53,54 @@ class CryptoUtils {
   /// through unchanged, byte for byte, which is what makes this safe to add:
   /// no wallet whose password is ASCII derives a different key than it did
   /// before.
+  ///
+  /// **Off the calling isolate** (the owner, 14 November 2026: moving the
+  /// password's PBKDF2 off the main thread — "it is needed"). BoringSSL runs
+  /// the 600,000 rounds synchronously, and Dart runs on Android's main
+  /// thread. Measured on the Mac's test VM that day: the first derivation in a
+  /// process 0.44–1.32 s, the library being loaded with it, and each one after
+  /// it about 36 ms (SHA-256 in hardware); a phone was not measured. An ANR was
+  /// recorded on the emulator 7.5 s after a password was typed
+  /// (`STATUS_DETAILS.md#unlock-history-warmup-anr`); that this was its cause
+  /// is not shown. A background isolate runs it now; the bytes it was handed
+  /// are overwritten there, and this side's copy here.
   static Future<Uint8List> deriveKey(String password, List<int> salt) async {
-    final pbkdf2Key =
-        await Pbkdf2SecretKey.importRawKey(canonicalSecretBytes(password));
-    return pbkdf2Key.deriveBits(
-      256,
-      Hash.sha256,
-      Uint8List.fromList(salt),
-      600000,
-    );
+    final secret = canonicalSecretBytes(password);
+    final saltBytes = Uint8List.fromList(salt);
+    try {
+      if (!deriveOffThisIsolate) return await _pbkdf2Sha256(secret, saltBytes);
+      final key = await Isolate.run(() async {
+        try {
+          return await _pbkdf2Sha256(secret, saltBytes);
+        } finally {
+          secret.fillRange(0, secret.length, 0);
+        }
+      });
+      derivedOffThisIsolate++;
+      return key;
+    } finally {
+      secret.fillRange(0, secret.length, 0);
+    }
+  }
+
+  /// Whether [deriveKey] runs on a background isolate — and the unlock's
+  /// open of a sealed phrase in the key core with it (`WalletProvider`): true
+  /// everywhere but in a widget test, whose fake clock never delivers an
+  /// isolate's answer (`test/flutter_test_config.dart` turns it off;
+  /// `crypto_utils_kdf_isolate_test` and `key_core_open_off_isolate_test` run
+  /// with it on, with the real clock).
+  static bool deriveOffThisIsolate = true;
+
+  /// How many keys [deriveKey] has had worked out on another isolate. Only
+  /// the test that holds it there reads it: a key is the same bytes wherever
+  /// it is computed, and a warm derivation is too short for a stalled
+  /// heartbeat to tell the two apart.
+  @visibleForTesting
+  static int derivedOffThisIsolate = 0;
+
+  static Future<Uint8List> _pbkdf2Sha256(Uint8List secret, Uint8List salt) async {
+    final pbkdf2Key = await Pbkdf2SecretKey.importRawKey(secret);
+    return pbkdf2Key.deriveBits(256, Hash.sha256, salt, 600000);
   }
 
   /// Argon2id of [password] and [salt]: a 256-bit key that costs memory, not
@@ -166,25 +207,51 @@ class CryptoUtils {
       Uint8List.fromList(base64Decode(decrypt(base64Decode(wrapped), wrappingKey)));
 
   static Uint8List encrypt(String plaintext, Uint8List key) {
+    final input = Uint8List.fromList(utf8.encode(plaintext));
+    return encryptBytes(input, key);
+  }
+
+  static String decrypt(List<int> encryptedData, Uint8List key) {
+    final plain = decryptBytes(encryptedData, key);
+    try {
+      return utf8.decode(plain);
+    } finally {
+      plain.fillRange(0, plain.length, 0);
+    }
+  }
+
+  /// [encrypt] for bytes: AES-256-GCM, a fresh 12-byte nonce in front.
+  ///
+  /// **For a secret that must never become a `String`** — an imported key,
+  /// sealed on its own (`docs/RUST_KEY_CORE_DESIGN.md#phase-5b`): a `String`
+  /// cannot be written over, and [encrypt]'s argument already is one. The
+  /// cipher's own output buffer is written over once it has been copied.
+  static Uint8List encryptBytes(Uint8List plain, Uint8List key) {
     final nonce = Uint8List.fromList(
         List<int>.generate(12, (i) => _secureRandom.nextInt(256)));
     final cipher = GCMBlockCipher(AESEngine())
       ..init(true, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
-    final input = Uint8List.fromList(utf8.encode(plaintext));
-    final out = Uint8List(cipher.getOutputSize(input.length));
-    var len = cipher.processBytes(input, 0, input.length, out, 0);
+    final out = Uint8List(cipher.getOutputSize(plain.length));
+    var len = cipher.processBytes(plain, 0, plain.length, out, 0);
     len += cipher.doFinal(out, len);
     return Uint8List.fromList(nonce + out.sublist(0, len));
   }
 
-  static String decrypt(List<int> encryptedData, Uint8List key) {
+  /// [decrypt] for bytes: what [encryptBytes] sealed, as bytes the caller
+  /// writes over when done. Throws when [key] is not the one it was sealed
+  /// under, or the data was changed.
+  static Uint8List decryptBytes(List<int> encryptedData, Uint8List key) {
     final nonce = Uint8List.fromList(encryptedData.sublist(0, 12));
     final ciphertext = Uint8List.fromList(encryptedData.sublist(12));
     final cipher = GCMBlockCipher(AESEngine())
       ..init(false, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
     final out = Uint8List(cipher.getOutputSize(ciphertext.length));
-    var len = cipher.processBytes(ciphertext, 0, ciphertext.length, out, 0);
-    len += cipher.doFinal(out, len);
-    return utf8.decode(out.sublist(0, len));
+    try {
+      var len = cipher.processBytes(ciphertext, 0, ciphertext.length, out, 0);
+      len += cipher.doFinal(out, len);
+      return Uint8List.fromList(out.sublist(0, len));
+    } finally {
+      out.fillRange(0, out.length, 0);
+    }
   }
 }

@@ -165,8 +165,8 @@ or other non-public release data.
 
 | Version | Status |
 |---|---|
-| The latest release | Supported |
-| Previous releases | Best effort |
+| 2.0.x, the latest release | Supported |
+| 1.0.0 and 1.0.1 | Superseded by 2.0.0, which reads every record they wrote; no further changes |
 | Unreleased commits | Not supported |
 
 A version is considered supported only when it is identified by a published

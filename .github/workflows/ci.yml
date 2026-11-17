@@ -5,8 +5,10 @@
 # compiles BoringSSL for the test host, so a toolchain problem on either shows
 # up here rather than on somebody's machine.
 #
-# The native files under `native/` are published for review and are not built
-# here: the core carries no Android or iOS project to build them in.
+# The Kotlin and Swift files under `native/android/` and `native/ios/` are
+# published for review and are not built here: the core carries no Android or
+# iOS project to build them in. The key core, `native/key_core/`, is: Cargo
+# builds and tests it at the toolchain its `rust-toolchain.toml` pins.
 #
 # Every action is pinned to a full commit SHA, the tag beside it for reading.
 # A tag can be moved by whoever controls the action's repository; a SHA cannot.
@@ -67,3 +69,33 @@ jobs:
       # default limit stopped a test that was still working.
       - name: Test
         run: flutter test --timeout=5x
+
+  key-core:
+    name: Key core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: native/key_core
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rustup reads rust-toolchain.toml and installs exactly that toolchain,
+      # not whatever the runner has.
+      - name: Toolchain
+        run: rustup toolchain install
+
+      # `--locked`: the committed Cargo.lock, exactly, or nothing. The vectors,
+      # the refusals and the stack scrub, in both profiles — the release one
+      # is what ships.
+      - name: Test
+        run: cargo test --locked
+
+      - name: Test, release
+        run: cargo test --release --locked
