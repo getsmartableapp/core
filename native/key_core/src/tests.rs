@@ -684,6 +684,43 @@ fn starkware_vectors_give_the_published_stark_keys_and_grind() {
 }
 
 #[test]
+fn the_stark_nonce_is_cairo_langs_for_every_vector() {
+    // **RUSTSEC-2026-0387, 17 November 2026.** The nonce is made here in place
+    // of `starknet-crypto`'s `rfc6979_generate_k`, whose `crypto-bigint` 0.5
+    // could branch on the secret; it must be the same nonce, or every Starknet
+    // signature changes. These are the vectors that function was tested with,
+    // generated from cairo-lang (`src/stark_vectors.rs`).
+    use crate::stark_vectors::{STARK_RFC6979_NOT_PADDED, STARK_RFC6979_PADDED};
+    for (hash, key, seed, k) in STARK_RFC6979_PADDED.iter().chain(STARK_RFC6979_NOT_PADDED.iter()) {
+        let nonce = keys::stark_nonce(&bytes32(key), &bytes32(hash), &bytes32(seed));
+        assert_eq!(to_hex(&nonce[..]), *k, "hash {hash}");
+    }
+    // No seed is no additional data — RFC 6979 as written, the first nonce a
+    // signature tries — and a seed's leading zero bytes are not data either.
+    let (hash, key) = (bytes32(STARK_RFC6979_PADDED[0].0), bytes32(STARK_RFC6979_PADDED[0].1));
+    let mut one = [0u8; 32];
+    one[31] = 1;
+    assert_ne!(keys::stark_nonce(&key, &hash, &[0u8; 32])[..], keys::stark_nonce(&key, &hash, &one)[..]);
+    // The no-seed nonce again, drawn and tested here on bytes rather than on
+    // `crypto-bigint`: shift right four bits, keep the first draw that is
+    // neither zero nor at or above the order.
+    let order = hex("0800000000000010ffffffffffffffffb781126dcae7b2321e66a241adc64d2f");
+    let mut drbg = rfc6979::HmacDrbg::<sha2_010::Sha256>::new(&key, &hash, &[]);
+    let expected = loop {
+        let mut draw = [0u8; 32];
+        drbg.fill_bytes(&mut draw);
+        let mut shifted = [0u8; 32];
+        for i in 0..32 {
+            shifted[i] = (draw[i] >> 4) | if i == 0 { 0 } else { draw[i - 1] << 4 };
+        }
+        if shifted != [0u8; 32] && shifted[..] < order[..] {
+            break shifted;
+        }
+    };
+    assert_eq!(keys::stark_nonce(&key, &hash, &[0u8; 32])[..], expected[..]);
+}
+
+#[test]
 fn the_second_tree_is_bip32_for_every_seed_length_bip32_takes() {
     // `derive_from_any_seed` computes the master key itself; for the lengths
     // `bip32` takes it must be `bip32`'s master and children exactly.

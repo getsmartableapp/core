@@ -79,6 +79,8 @@ mod zcash;
 mod tests;
 #[cfg(test)]
 mod vectors;
+#[cfg(test)]
+mod stark_vectors;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};

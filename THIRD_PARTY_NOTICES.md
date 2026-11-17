@@ -61,6 +61,7 @@ the source below, which keeps its own licence:
 | EIP-191 hash and signature | `alloy-primitives` 1.7.3 and `alloy-signer-local` 2.5.0, quoting web3.js's documentation | MIT OR Apache-2.0 |
 | Stark keys by EIP-2645 paths, and the grind | StarkWare's [starkex-resources](https://github.com/starkware-libs/starkex-resources), `crypto/starkware/crypto/signature/test/key_derivation_test.js` | Apache-2.0, Copyright 2019 StarkWare Industries Ltd. |
 | A Stark public key | `starknet-crypto` 0.8.1, `src/ecdsa.rs` (`test_get_public_key_1`) | MIT OR Apache-2.0 |
+| Stark curve RFC 6979 nonces | [starknet-rs](https://github.com/xJonathanLEI/starknet-rs)'s `starknet-crypto/test-data/rfc6979_padded.json` and `rfc6979_not_padded.json` at the tag `starknet-crypto/v0.8.1`, generated from cairo-lang | MIT OR Apache-2.0 |
 | A transparent Zcash address and its TEX form | [ZIP-320](https://zips.z.cash/zip-0320)'s reference pair | MIT, the ZIP's owners (Daira-Emma Hopwood, Kris Nuttycombe) |
 | Zcash signature digests and transaction ids | Six transparent version 5 transactions from Zcash's mainnet (heights 3,576,097 to 3,576,132) and the coins they spend, as zec.rocks' lightwalletd served them on 15 November 2026 — the network's own record, verified by the signatures in them | Public blockchain data |
 
@@ -70,8 +71,16 @@ The packages named in `pubspec.yaml` are fetched by `flutter pub get` and are
 not redistributed in this repository. Each keeps its own licence, and
 `flutter pub deps` lists them. The same holds for the key core's crates: Cargo
 fetches them at the versions `native/key_core/Cargo.lock` locks, and none is
-copied here. A build that ships the key core carries their notices — the
-Smartable app lists them on its licence page.
+copied here but one. A build that ships the key core carries their notices —
+the Smartable app lists them on its licence page.
+
+The one copied: **`native/key_core/vendor/starknet-crypto`** is
+`starknet-crypto` 0.8.1 by Jonathan LEI
+([starknet-rs](https://github.com/xJonathanLEI/starknet-rs), MIT OR
+Apache-2.0, used here under Apache-2.0), with its RFC 6979 module, that
+module's benchmark and the five dependencies only it used removed; the key
+core makes the nonce itself. `SMARTABLE.md` beside it says what changed and
+why (RUSTSEC-2026-0387).
 
 One is named here although the others are not: **`unorm_dart`** (MIT,
 Copyright 2018 Yasuhiro Shimizu, a Dart port of
