@@ -48,7 +48,7 @@ review screens and the backend stay proprietary — see
 |---|---|---|
 | **A typed secret becomes a key** | `crypto_utils.dart`<br>`unicode_nfc.dart` | Every password, PIN and backup passphrase is first put in one form, Unicode NFC, so the same word typed on two keyboards is the same key. Then PBKDF2-HMAC-SHA256 at 600,000 rounds — or, for a split-backup share, which can be guessed at away from the phone, Argon2id with 64 MiB of memory per guess. |
 | **The recovery phrase, sealed** | `vault_keeper.dart`<br>`password_policy.dart`<br>`seed_vault.dart`<br>`password_recovery.dart` | Each recovery phrase is written under a random key of its own that nobody types, and the password only wraps that key. A password has at least twelve characters and is not mostly a pattern before anything is sealed under it. The PIN and biometric unlock each seal that key and the key imported private keys are encrypted under — never the phrase — and open only the wallet they were set up for. |
-| **Encrypted or not stored** | `secure_storage.dart` | Secrets go to the platform keystore or nowhere — no plaintext fallback. A secret that cannot be decrypted is reported, never deleted. |
+| **Encrypted storage** | `secure_storage.dart` | Secrets — sealed phrases, imported keys, the PIN and device records — are written only to the platform keystore. A write that fails stops the operation and says so; nothing is written anywhere readable instead. Ordinary preferences, such as the theme, may still fall back to plain storage. A store that cannot be read is reported as such, not as "no wallet", and nothing is deleted after it that the person did not ask to delete. |
 | **A key the app can use and cannot read** | `hardware_key.dart`<br>`key_backing.dart`<br>`native/android/main/HardwareVaultKey.kt`<br>`native/ios/main/HardwareVaultKey.swift` | The wallet's unlock keys are sealed by a key in Android Keystore — StrongBox, then the TEE — or in the iOS Secure Enclave. Which one actually holds it is reported, not assumed. |
 | **The app PIN** | `pin_lock.dart`<br>`native/android/main/PinPepperKey.kt`<br>`native/ios/main/PinPepperKey.swift` | Six digits, passed first through a key in the phone's key store — HMAC in Android Keystore, StrongBox where there is one, or ECDH in the Secure Enclave — then sealed by a second device key. Every guess is a key-store operation on that phone, so the million PINs cannot be carried off to a faster machine. On Android 15 and later both keys work only while the phone is unlocked. An unlocked, rooted phone is not protected. |
 | **Biometric unlock** | `quick_unlock.dart`<br>`native/*/main/HardwareVaultKey.*` | Face ID, Touch ID or a Class 3 biometric on Android, bound to a key that is released once per use. The phone's own passcode or pattern never opens the wallet. `quick_unlock.dart` decides when the option is offered at all. |
@@ -111,8 +111,8 @@ the core.
 
 ## Checks and releases
 
-Up to 1.0.0, every change ran through GitHub Actions, with the workflows kept in
-this repository:
+Every change runs through GitHub Actions, with the workflows kept in this
+repository:
 
 | Check | What it runs |
 |---|---|
@@ -121,16 +121,6 @@ this repository:
 | [Scorecard](.github/workflows/scorecard.yml) | [OpenSSF Scorecard](https://securityscorecards.dev): pinned actions, token permissions, branch protection, security policy |
 | [CodeQL](.github/workflows/codeql.yml) | [CodeQL](https://codeql.github.com) on the workflows themselves — untrusted input reaching a shell, excess token permissions (CodeQL has no Dart analysis) |
 | [Release](.github/workflows/release.yml) | The tag, `pubspec.yaml` and the changelog checked against each other, the tests, then a source archive, its SHA-256 and a signed provenance attestation |
-
-GitHub Actions is not running for this repository at present. From 1.0.1, a
-version is checked before it is published instead:
-`flutter pub get --enforce-lockfile`, `flutter analyze` and the full test
-suite run on macOS on the exact tree that is tagged — and, from the version
-that adds the key core, its `cargo test` debug and release and the binding's
-`dart test` — and the archive and
-`SHA256SUMS` are made from the tag with `git archive`, as the release workflow
-does. Such a version carries no provenance attestation, and its release says
-so.
 
 Every action is pinned to a full commit SHA. Dependencies are pinned to the
 exact versions the app ships, and `--enforce-lockfile` refuses any other.
@@ -142,20 +132,23 @@ Wallet release its files came from. How versions are numbered and made:
 [docs/releasing.md](docs/releasing.md).
 
 **Each release is kept.** A new version is added to
-[Releases](https://gitlab.com/getsmartable-app/core/-/releases) beside the
-earlier ones. To check that an archive is the one the release lists:
+[Releases](https://github.com/getsmartableapp/core/releases) beside the
+earlier ones, and the same archive, checksums and attestation bundle to the
+[GitLab mirror](https://gitlab.com/getsmartable-app/core/-/releases). To check
+that an archive is the one the release lists:
 
 ```bash
 sha256sum -c SHA256SUMS
 ```
 
-1.0.0 also carries a provenance attestation from GitHub Actions, with its
-Sigstore bundle attached, which can be checked without a GitHub account:
+Every release also carries a provenance attestation from the release
+workflow, with its Sigstore bundle attached, which can be checked without a
+GitHub account:
 
 ```bash
-gh attestation verify smartable-wallet-core-v1.0.0.tar.gz \
-  --bundle smartable-wallet-core-v1.0.0.tar.gz.intoto.jsonl \
-  --repo getsmartable-app/core
+gh attestation verify smartable-wallet-core-v2.0.1.tar.gz \
+  --bundle smartable-wallet-core-v2.0.1.tar.gz.intoto.jsonl \
+  --repo getsmartableapp/core
 ```
 
 The attestation proves where the archive came from. It does not prove that an

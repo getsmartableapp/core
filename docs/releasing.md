@@ -70,15 +70,9 @@ its change belongs to.
    `git archive`, writes `SHA256SUMS`, signs a provenance attestation and
    publishes the release, with the changelog entry as its notes.
 
-**While GitHub Actions is not running** for this repository (from 1.0.1),
-steps 4 and 5 are done locally: `flutter pub get --enforce-lockfile`,
-`flutter analyze` and `flutter test` — and the key core's `cargo test --locked`,
-debug and release, and the binding's tests — run on the exact tree that is
-committed and tagged, the commit and the tag are pushed to
-gitlab.com/getsmartable-app/core, and the archive and `SHA256SUMS` are made
-from the tag with the same `git archive` command the workflow uses and attached
-to the release. No provenance attestation is made, and the release notes say
-so.
+Steps 4 and 5 run at github.com/getsmartableapp/core. The same commit and tag,
+and the release's archive, `SHA256SUMS` and attestation bundle, are then added
+to the mirror at gitlab.com/getsmartable-app/core.
 
 Each release is kept: a new version is added beside the earlier ones and none
 is replaced.
@@ -91,8 +85,8 @@ Download the archive and `SHA256SUMS` from the release, then:
 sha256sum -c SHA256SUMS
 ```
 
-This shows the archive is the one the release lists. A version built by the
-release workflow (1.0.0) also carries a provenance attestation, which shows the
+This shows the archive is the one the release lists. Every version
+also carries a provenance attestation from the release workflow, which shows the
 archive was built by that workflow from the tagged commit, through GitHub's
 signing identity, without trusting us:
 
@@ -109,9 +103,6 @@ gh attestation verify smartable-wallet-core-vX.Y.Z.tar.gz \
   --bundle smartable-wallet-core-vX.Y.Z.tar.gz.intoto.jsonl \
   --repo getsmartableapp/core
 ```
-
-1.0.0's attestation was made before the repository's GitHub address changed,
-and names it `getsmartable-app/core`: the README gives that command.
 
 Neither shows that an application binary was built from this source. The core
 is not a build of the application, and no reproducible build is claimed.
