@@ -5,7 +5,7 @@
 <br>
 
 [![Release](https://gitlab.com/getsmartable-app/core/-/badges/release.svg)](https://gitlab.com/getsmartable-app/core/-/releases)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15544/badge)](https://www.bestpractices.dev/projects/15544)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16847/badge)](https://www.bestpractices.dev/projects/16847)
 [![OpenSSF Scorecard (GitHub)](https://img.shields.io/ossf-scorecard/github.com/getsmartableapp/core?label=openssf%20scorecard%20%28GitHub%29)](https://securityscorecards.dev/viewer/?uri=github.com/getsmartableapp/core)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Platforms: Android | iOS](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-lightgrey)](#whats-inside)
