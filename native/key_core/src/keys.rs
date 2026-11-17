@@ -5,7 +5,7 @@
 //! the refusals around the calls and the erasing after them.
 
 use bip32::{ChildNumber, DerivationPath, ExtendedKey, ExtendedKeyAttrs, ExtendedPrivateKey, Prefix};
-use crypto_bigint::{ArrayEncoding, NonZero, U256};
+use crypto_bigint::{CtLt, NonZero, U256};
 use bip39::{Language, Mnemonic};
 use curve25519_dalek::{EdwardsPoint, Scalar as EdScalar};
 use ed25519_dalek::hazmat::{ExpandedSecretKey, raw_sign};
@@ -974,7 +974,8 @@ pub(crate) fn cardano_sign(node: &CardanoNode, message: &[u8]) -> Result<[u8; 64
 /// The path of the Ethereum key that seeds every Argent account.
 pub(crate) const ARGENT_SECRET_PATH: &str = "m/44'/60'/0'/0/0";
 
-/// The Stark curve's order — the grind reduces into it.
+/// The Stark curve's order — the grind reduces into it, and a nonce is below
+/// it.
 const STARK_ORDER: U256 =
     U256::from_be_hex("0800000000000010ffffffffffffffffb781126dcae7b2321e66a241adc64d2f");
 
@@ -1025,8 +1026,10 @@ pub(crate) fn derive_from_any_seed(seed: &[u8], path: &DerivationPath) -> Result
 /// Written here (O21): `starknet-crypto` has no grind. A 256th index is
 /// refused rather than wrapped; reaching it is about 2^-1280.
 pub(crate) fn stark_grind(key_seed: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Refusal> {
-    let order = NonZero::new(STARK_ORDER).unwrap();
-    // 2^256 mod n, then the limit 2^256 - (2^256 mod n).
+    let order = NonZero::<U256>::from_be_hex(
+        "0800000000000010ffffffffffffffffb781126dcae7b2321e66a241adc64d2f",
+    );
+    // 2^256 mod n, then the limit 2^256 - (2^256 mod n). Public values.
     let remainder = U256::MAX.rem(&order).wrapping_add(&U256::ONE).rem(&order);
     let limit = U256::ZERO.wrapping_sub(&remainder);
     for index in 0u8..=255 {
@@ -1036,10 +1039,13 @@ pub(crate) fn stark_grind(key_seed: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Re
         let mut digest = Zeroizing::new([0u8; 32]);
         digest.copy_from_slice(&hasher.finalize());
         let mut value = U256::from_be_slice(&digest[..]);
-        if value < limit {
+        // Compared and reduced in constant time (crypto-bigint 0.7.10); only
+        // whether this digest is kept leaves the comparison, as the grind
+        // itself makes public by trying the next index.
+        if value.ct_lt(&limit).to_bool() {
             let mut key = value.rem(&order);
             let mut out = Zeroizing::new([0u8; 32]);
-            out.copy_from_slice(&key.to_be_byte_array());
+            out.copy_from_slice(key.to_be_bytes().as_ref());
             value.zeroize();
             key.zeroize();
             return Ok(out);
@@ -1047,6 +1053,32 @@ pub(crate) fn stark_grind(key_seed: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Re
         value.zeroize();
     }
     Err(Refusal::Derivation)
+}
+
+/// The Stark curve's RFC 6979 nonce for [hash] under [secret], with [seed]
+/// as additional data (its leading zero bytes dropped; none for no seed) —
+/// `starknet-crypto` 0.8.1's `rfc6979_generate_k`, made here so that no
+/// `crypto-bigint` before 0.7.6 handles it (RUSTSEC-2026-0387). The same
+/// steps: HMAC-DRBG over SHA-256 seeded with the key's and the hash's 32
+/// big-endian bytes, 32 bytes drawn, shifted right by four bits (the order's
+/// 252 bits), until the value is neither zero nor at or above the order —
+/// tested in constant time. Equal to the crate's for every input, which the
+/// tests hold it to.
+pub(crate) fn stark_nonce(secret: &[u8; 32], hash: &[u8; 32], seed: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+    let start = seed.iter().position(|b| *b != 0).unwrap_or(seed.len());
+    let mut drbg = rfc6979::HmacDrbg::<sha2_010::Sha256>::new(secret, hash, &seed[start..]);
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    loop {
+        drbg.fill_bytes(&mut bytes[..]);
+        let mut k = U256::from_be_slice(&bytes[..]).shr(4);
+        if (k.is_nonzero() & k.ct_lt(&STARK_ORDER)).to_bool() {
+            let mut out = Zeroizing::new([0u8; 32]);
+            out.copy_from_slice(k.to_be_bytes().as_ref());
+            k.zeroize();
+            return out;
+        }
+        k.zeroize();
+    }
 }
 
 /// The Stark private key at [path] below [seed], by Argent's derivation: the
@@ -1094,9 +1126,14 @@ pub(crate) fn starknet_sign(secret: &[u8; 32], hash: &[u8; 32]) -> Result<[u8; 6
     let private = Felt::from_bytes_be(secret);
     let message = Felt::from_bytes_be(hash);
     let public = starknet_crypto::get_public_key(&private);
+    // The nonce's inputs as the crate took them: the felts' own bytes.
+    let private_bytes = Zeroizing::new(private.to_bytes_be());
+    let message_bytes = message.to_bytes_be();
     let mut seed: Option<Felt> = None;
     for _ in 0..STARK_SIGN_ATTEMPTS {
-        let k = starknet_crypto::rfc6979_generate_k(&message, &private, seed.as_ref());
+        let seed_bytes = seed.map_or([0u8; 32], |s| s.to_bytes_be());
+        let nonce = stark_nonce(&private_bytes, &message_bytes, &seed_bytes);
+        let k = Felt::from_bytes_be(&nonce);
         match starknet_crypto::sign(&private, &message, &k) {
             Ok(signature) => {
                 match starknet_crypto::verify(&public, &message, &signature.r, &signature.s) {

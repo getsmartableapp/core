@@ -8,6 +8,28 @@ as [docs/releasing.md](docs/releasing.md#version-numbers) applies it to this
 code. Each version names the Smartable Wallet release its files were exported
 from.
 
+## [2.0.1] - 2026-11-17
+
+Exported from Smartable Wallet 3.0.1 (build 24).
+
+### Security
+
+- RUSTSEC-2026-0387 fixed: `crypto-bigint` before 0.7.6 could branch on secret
+  values in subtraction, division and comparison, depending on the compiler
+  and the CPU. The key core used 0.5.5 for Starknet — to grind a key, which
+  divides a secret, and, inside `starknet-crypto`, to make the RFC 6979 nonce
+  of every signature, compared as one. The grind now runs on 0.7.10, and the
+  nonce is made in the key core (`keys::stark_nonce`) on 0.7.10 and
+  `rfc6979` 0.4.0's HMAC-DRBG; `starknet-crypto` is taken from
+  `native/key_core/vendor/starknet-crypto`, 0.8.1 less its RFC 6979 module, so
+  no `crypto-bigint` before 0.7.6 is built. Every nonce is the same as before —
+  held to cairo-lang's twenty vectors — so every Starknet key and signature
+  is unchanged.
+
+### Added
+
+- `.github/CODEOWNERS`, naming the organization's maintainers team.
+
 ## [2.0.0] - 2026-11-17
 
 Exported from Smartable Wallet 3.0.0 (build 23).
@@ -129,6 +151,7 @@ Exported from Smartable Wallet 2.2.0 (build 21).
     derived from the wallet password; a share written on paper leaves only a
     note on the phone, never its words.
 
+[2.0.1]: https://gitlab.com/getsmartable-app/core/-/releases/v2.0.1
 [2.0.0]: https://gitlab.com/getsmartable-app/core/-/releases/v2.0.0
 [1.0.1]: https://gitlab.com/getsmartable-app/core/-/releases/v1.0.1
 [1.0.0]: https://gitlab.com/getsmartable-app/core/-/releases/v1.0.0

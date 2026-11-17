@@ -34,9 +34,18 @@ hmac = { version = "=0.13.0", default-features = false }
 # The Stark curve for Starknet (O20): its public key, RFC 6979 signature and
 # verification. starknet-rs's own crate; the curve is not written here.
 starknet-crypto = { version = "=0.8.1", default-features = false }
-# The 256-bit arithmetic of Starknet's key grind (O21), on the stack and
-# erasable; the version `starknet-crypto` builds, so nothing new enters.
-crypto-bigint = { version = "=0.5.5", default-features = false, features = ["generic-array", "zeroize"] }
+# The 256-bit arithmetic of Starknet's key grind (O21) and of its RFC 6979
+# nonce, on the stack and erasable. **0.7.10, not the 0.5.5 `starknet-crypto`
+# asks for** (RUSTSEC-2026-0387, 17 November 2026: before 0.7.6, subtraction,
+# division and comparison could branch on secret values depending on the
+# compiler and the CPU — and the grind divides a secret, the nonce is compared
+# as one). The nonce is made here for that reason; see `[patch.crates-io]`.
+crypto-bigint = { version = "=0.7.10", default-features = false, features = ["zeroize"] }
+# RFC 6979's HMAC-DRBG for the Stark curve's nonce — RustCrypto's, the one
+# `starknet-crypto` 0.8.1 drove itself, already in the tree; with its own
+# digest generation, `sha2` 0.10.
+rfc6979 = { version = "=0.4.0", default-features = false }
+sha2_010 = { package = "sha2", version = "=0.10.9", default-features = false }
 # AES-256-GCM, to open the sealed phrase here rather than in Dart (phase 6a,
 # `kc_open_sealed`). 0.10.3, the owner's decision O27: in the local registry,
 # and the version RUSTSEC-2023-0096 was fixed in — the tag is checked before
@@ -87,6 +96,14 @@ blake2 = { version = "=0.10.6", default-features = false }
 getrandom = { version = "=0.2.17", default-features = false }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 base64ct = { version = "1", default-features = false, features = ["alloc"] }
+
+# **`starknet-crypto` without its RFC 6979 module** (17 November 2026): the
+# crate's only use of `crypto-bigint` 0.5 (RUSTSEC-2026-0387), with no fixed
+# release upstream. The copy in `vendor/starknet-crypto` is 0.8.1 as published,
+# less `src/rfc6979.rs`, its benchmark and the five dependencies only that file
+# used; `keys::stark_nonce` makes the nonce in its place. See its SMARTABLE.md.
+[patch.crates-io]
+starknet-crypto = { path = "vendor/starknet-crypto" }
 
 [features]
 # libsecp256k1's small precomputed tables: about a third of the library's size,
